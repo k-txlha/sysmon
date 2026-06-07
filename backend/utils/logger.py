@@ -1,6 +1,7 @@
 import logging
 import sys
 
+
 def setup_logger(name="siem-agent"):
     logger = logging.getLogger(name)
     logger.setLevel(logging.INFO)
@@ -9,8 +10,8 @@ def setup_logger(name="siem-agent"):
     if not logger.handlers:
         # Formatter: [Timestamp] [Level] [Module]: Message
         formatter = logging.Formatter(
-            '[%(asctime)s] [%(levelname)s] [%(name)s]: %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
+            "[%(asctime)s] [%(levelname)s] [%(name)s]: %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
         )
 
         # Send logs to Console
