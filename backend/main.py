@@ -24,9 +24,5 @@ app = FastAPI(
 app.include_router(router)
 
 if __name__ == "__main__":
-    print(f"printing bootstrap servers {settings.KAFKA_BOOTSTRAP_SERVERS}")
-    print(f"printing bootstrap servers {settings.PORT}")
-    print(f"printing bootstrap servers {settings.KAFKA_TOPIC}")
-    print("-" * 200)
     print(f"Starting SIEM Backend Gateway on port {settings.PORT}...")
     uvicorn.run("main:app", host="0.0.0.0", port=settings.PORT, reload=True)
