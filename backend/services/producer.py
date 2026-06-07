@@ -1,7 +1,7 @@
 from utils.logger import setup_logger
 from aiokafka import AIOKafkaProducer
 import asyncio
-from config import settings
+from config.settings import settings
 import json
 
 logger = setup_logger("producer")
@@ -15,9 +15,9 @@ class KafkaProducerService:
         self.producer = AIOKafkaProducer(
             bootstrap_servers=settings.KAFKA_BOOTSTRAP_SERVERS,
             acks="all",
-            compressio_type="gzip",
+            compression_type="gzip",
             enable_idempotence=True,
-            batch_size=65536,
+            max_batch_size=65536,
             linger_ms=500,
         )
         await self.producer.start()
