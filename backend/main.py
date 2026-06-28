@@ -4,6 +4,9 @@ from contextlib import asynccontextmanager
 from api.v1.transport import router
 from services.producer import kafka_service
 from config.settings import settings
+from utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 
 
 @asynccontextmanager
@@ -24,5 +27,5 @@ app = FastAPI(
 app.include_router(router)
 
 if __name__ == "__main__":
-    print(f"Starting SIEM Backend Gateway on port {settings.PORT}...")
+    logger.info("Starting SIEM Backend Gateway on port %s...", settings.PORT)
     uvicorn.run("main:app", host="0.0.0.0", port=settings.PORT, reload=True)
