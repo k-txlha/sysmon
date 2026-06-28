@@ -1,6 +1,5 @@
 from utils.logger import setup_logger
 from aiokafka import AIOKafkaProducer
-import asyncio
 from config.settings import settings
 import json
 
