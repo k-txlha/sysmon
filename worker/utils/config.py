@@ -24,6 +24,8 @@ class Config:
         self.KAFKA_BOOTSTRAP_SERVERS = os.getenv(
             "KAFKA_BOOTSTRAP_SERVERS", "localhost:29092"
         )
+        self.MAX_BATCH_SIZE = os.getenv("MAX_BATCH_SIZE", 1000)
+        self.MAX_WAIT_TIME = os.getenv("MAX_WAIT_TIME", 5.0)
 
 
 settings = Config()
