@@ -18,7 +18,7 @@ The repo also includes Docker Compose files for local Kafka and ClickHouse under
 agent -> backend (FastAPI) -> Kafka -> worker -> ClickHouse
 ```
 
-## 📁 Repository Layout (actual)
+## 📁 Repository Layout
 
 ```
 ├── agent/
