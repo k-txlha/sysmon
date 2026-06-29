@@ -9,8 +9,8 @@ from utils.logger import setup_logger
 logger = setup_logger("worker_main")
 
 # Performance / Batching configurations
-MAX_BATCH_SIZE = 1000
-MAX_WAIT_TIME = 5.0  # Seconds
+MAX_BATCH_SIZE = settings.MAX_BATCH_SIZE
+MAX_WAIT_TIME = settings.MAX_WAIT_TIME  # Seconds
 
 
 async def start_worker():
@@ -72,7 +72,7 @@ async def start_worker():
                         str(platform.get("operating_system_version", "")),
                         str(platform.get("operating_system_release", "")),
                         str(
-                            platform.get("machine_archihtecture", "")
+                            platform.get("machine_architecture", "")
                         ),  # Maps custom typo from agent payload Safely
                         1,  # Staging 'is_latest' as True initially
                         global_timestamp,
