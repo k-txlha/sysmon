@@ -18,6 +18,28 @@ The repo also includes Docker Compose files for local Kafka and ClickHouse under
 agent -> backend (FastAPI) -> Kafka -> worker -> ClickHouse
 ```
 
+**Architectural Blueprint**
+
+```
+[ Agent ]
+    │  (Pushes Telemetry via API / Client-Server)
+    ▼
+[ Backend ]
+    │  (Produces Event)
+    ▼
+[ Apache Kafka ]  <--- Event-Driven Backbone
+    │  (Consumer Pulls Event)
+    ▼
+[ Worker ]
+    │  (Bulk Writes)
+    ▼
+[ ClickHouse DB ] <--- CQRS Boundary (Separates Write/Read)
+    ▲
+    │  (Queries Analytics)
+    ▼
+[ Frontend Dashboard ]
+```
+
 ## 📁 Repository Layout
 
 ```
