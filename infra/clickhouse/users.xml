@@ -1,0 +1,13 @@
+<clickhouse>
+    <profiles>
+        <api_fast_path>
+            <max_execution_time>5</max_execution_time> <max_memory_usage>2147483648</max_memory_usage> <readonly>0</readonly> </api_fast_path>
+    </profiles>
+
+    <users>
+        <backend>
+            <password_sha256_hex>6d0807a09c92f8786264574f1b9380bee5ee9450e8eae16db1873352d9c20c0f</password_sha256_hex>
+            <profile>api_fast_path</profile>
+        </backend>
+    </users>
+</clickhouse>
