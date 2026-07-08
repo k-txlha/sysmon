@@ -1,14 +1,17 @@
-from fastapi import FastAPI, APIRouter, status, HTTPException
+from fastapi import Depends, FastAPI, APIRouter, status, HTTPException
 from services.producer import kafka_service
 from config.settings import settings
 from utils.logger import setup_logger
+from utils.rate_limiter import RateLimiter
 
 router = APIRouter(prefix="/api/v1")
 logger = setup_logger("transport")
 
+rate_limiter = RateLimiter(requests_limit=10, window_seconds=10)
+
 
 @router.post("/telemetry", status_code=status.HTTP_202_ACCEPTED)
-async def receive_telemetry(payload: dict):
+async def receive_telemetry(payload: dict, _=Depends(rate_limiter)):
     if not payload:
         raise HTTPException(status_code=400, detail="Empty payload received.")
 
