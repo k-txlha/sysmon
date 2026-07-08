@@ -17,9 +17,11 @@ class RateLimiter:
         # (Alternatively, fallback to client IP if payload is missing)
         try:
             body = await request.json()
-            identifier = body.get("agent_id", request.client.host)
+            identifier = body.get("agent_id")
+            if not identifier:
+                identifier = request.client.host if request.client else "unknown_ip"
         except Exception:
-            identifier = request.client.host
+            identifier = request.client.host if request.client else "unknown_ip"
 
         key = f"rate_limit:{identifier}"
         current_time = int(time.time())
