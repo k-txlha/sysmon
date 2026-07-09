@@ -9,8 +9,8 @@ from utils.logger import setup_logger
 logger = setup_logger("worker_main")
 
 # Performance / Batching configurations
-MAX_BATCH_SIZE = settings.MAX_BATCH_SIZE
-MAX_WAIT_TIME = settings.MAX_WAIT_TIME  # Seconds
+MAX_BATCH_SIZE = int(settings.MAX_BATCH_SIZE)
+MAX_WAIT_TIME = float(settings.MAX_WAIT_TIME)  # Seconds
 
 
 async def start_worker():
@@ -24,6 +24,7 @@ async def start_worker():
         bootstrap_servers=settings.KAFKA_BOOTSTRAP_SERVERS,
         group_id="siem_workers",
         auto_offset_reset="earliest",
+        max_poll_interval_ms=600000,
     )
     await consumer.start()
     logger.info(f"Kafka Worker actively consuming from topic: {settings.KAFKA_TOPIC}")
