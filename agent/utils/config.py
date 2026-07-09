@@ -23,9 +23,8 @@ class Config:
         self.BACKEND_URL = os.getenv(
             "SIEM_BACKEND_URL", "http://127.0.0.1:8000/api/v1/telemetry"
         )
-        self.COLLECTION_INTERVAL = int(os.getenv("SIEM_COLLECTION_INTERVAL", 10))
+        self.COLLECTION_INTERVAL = int(os.getenv("SIEM_COLLECTION_INTERVAL", 5))
         self.LOG_LEVEL = os.getenv("SIEM_LOG_LEVEL", "INFO")
 
 
 settings = Config()
-
