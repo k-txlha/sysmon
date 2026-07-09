@@ -20,6 +20,7 @@ class BackendSettings:
             "KAFKA_BOOTSTRAP_SERVERS", "localhost:29092"
         )
         self.KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "telemetry_data")
+        self.REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 
 
 settings = BackendSettings()
