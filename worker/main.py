@@ -122,19 +122,15 @@ async def start_worker():
                 # 1. Flush Device Asset Updates
                 if device_buffer:
                     rows_to_insert = list(device_buffer.values())
-
                     agent_ids_to_update = list(device_buffer.keys())
 
                     try:
-
                         formatted_ids = ", ".join(
                             [f"'{aid}'" for aid in agent_ids_to_update]
                         )
-
                         logger.info(
                             f"Rotating history in bulk for {len(agent_ids_to_update)} agents..."
                         )
-
                         db_service.client.command(f"""
                             ALTER TABLE DEVICES 
                             UPDATE is_latest = 0 
