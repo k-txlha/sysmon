@@ -27,5 +27,20 @@ class Config:
         self.MAX_BATCH_SIZE = os.getenv("MAX_BATCH_SIZE", 1000)
         self.MAX_WAIT_TIME = os.getenv("MAX_WAIT_TIME", 5.0)
 
+        # ── Alerting channel configuration ─────────────────────────────
+        # Set any of these to enable that channel; leave blank to disable.
+        self.SLACK_WEBHOOK_URL    = os.getenv("SLACK_WEBHOOK_URL", "")
+        self.DISCORD_WEBHOOK_URL  = os.getenv("DISCORD_WEBHOOK_URL", "")
+        self.SYSMON_DASHBOARD_URL = os.getenv("SYSMON_DASHBOARD_URL", "")
+
+        # Email / SMTP (works with Gmail, SendGrid, SES, Postfix, etc.)
+        self.SMTP_HOST     = os.getenv("SMTP_HOST", "")
+        self.SMTP_PORT     = int(os.getenv("SMTP_PORT", 587))
+        self.SMTP_USERNAME = os.getenv("SMTP_USERNAME", "")
+        self.SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
+        self.SMTP_FROM     = os.getenv("SMTP_FROM", "")
+        # Comma-separated list: "security@co.com,cto@co.com"
+        self.SMTP_TO       = os.getenv("SMTP_TO", "")
+
 
 settings = Config()

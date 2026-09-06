@@ -1,0 +1,30 @@
+# ============================================================
+# Rule: brute_force
+# ============================================================
+# Fires when the same source IP generates 5 or more FAILED
+# login attempts within a 60-second rolling window.
+#
+# Mapped to Windows Security Events:
+#   4625 — An account failed to log on
+#
+# Severity: CRITICAL — active brute-force credential attack.
+# ============================================================
+
+name: brute_force
+description: >
+  Detects rapid repeated login failures from the same source IP address,
+  a strong indicator of a brute-force or password-spray attack.
+  Fires when ≥5 FAILURE events originate from a single IP within 60 seconds.
+severity: CRITICAL
+enabled: true
+tags:
+  - brute_force
+  - credential_attack
+  - T1110  # MITRE ATT&CK: Brute Force
+
+condition:
+  type: threshold
+  field: source_ip
+  count: 5
+  window_seconds: 60
+  filter_status: FAILURE

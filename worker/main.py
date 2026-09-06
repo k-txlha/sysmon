@@ -1,10 +1,15 @@
 import asyncio
 import json
 import datetime
+from collections import defaultdict
 from aiokafka import AIOKafkaConsumer
 from db.ch_client import ClickHouseService
 from utils.config import settings
 from utils.logger import setup_logger
+
+# ── Detection Engine & Alerting ─────────────────────────────────────────────
+from detection import DetectionEngine
+from alerting import AlertDispatcher
 
 logger = setup_logger("worker_main")
 
@@ -18,7 +23,13 @@ async def start_worker():
     db_service = ClickHouseService()
     db_service.connect()
 
-    # 2. Initialize the Kafka Consumer
+    # 2. Initialize the Detection Engine (loads all YAML rules on startup)
+    engine = DetectionEngine()
+
+    # 3. Initialize the Alert Dispatcher (reads webhook/SMTP config from .env)
+    dispatcher = AlertDispatcher()
+
+    # 4. Initialize the Kafka Consumer
     consumer = AIOKafkaConsumer(
         settings.KAFKA_TOPIC,
         bootstrap_servers=settings.KAFKA_BOOTSTRAP_SERVERS,
@@ -153,6 +164,27 @@ async def start_worker():
                         f"Executing batch insert for {len(event_buffer)} security audits in EVENTS..."
                     )
                     db_service.insert_events_batch(event_buffer)
+
+                    # ── 3. Run Detection Engine on this event batch ────────────
+                    # Group events by agent_id for per-agent detection context
+                    events_by_agent: dict = defaultdict(list)
+                    for row in event_buffer:
+                        events_by_agent[row[0]].append(row)
+
+                    all_alerts = []
+                    for aid, agent_events in events_by_agent.items():
+                        fired = engine.evaluate(agent_events, aid)
+                        all_alerts.extend(fired)
+
+                    # 4. Persist alerts to ClickHouse + fan-out to configured channels
+                    if all_alerts:
+                        logger.info(
+                            f"Detection engine fired {len(all_alerts)} alert(s) "
+                            f"across {len(events_by_agent)} agent(s)."
+                        )
+                        db_service.insert_alerts_batch(all_alerts)
+                        dispatcher.dispatch(all_alerts)
+
                     event_buffer.clear()
 
                 # Reset execution timer
