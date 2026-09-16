@@ -18,6 +18,18 @@ MAX_BATCH_SIZE = int(settings.MAX_BATCH_SIZE)
 MAX_WAIT_TIME = float(settings.MAX_WAIT_TIME)  # Seconds
 
 
+def _parse_timestamp(ts_val: str | None) -> datetime.datetime:
+    """Parses ISO-8601 / RFC3339 timestamps safely into UTC datetime."""
+    if not ts_val:
+        return datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+    try:
+        clean_ts = str(ts_val).replace("Z", "+00:00")
+        dt = datetime.datetime.fromisoformat(clean_ts)
+        return dt.astimezone(datetime.timezone.utc).replace(tzinfo=None)
+    except Exception:
+        return datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+
+
 async def start_worker():
     # 1. Initialize and connect to ClickHouse
     db_service = ClickHouseService()
@@ -41,81 +53,72 @@ async def start_worker():
     logger.info(f"Kafka Worker actively consuming from topic: {settings.KAFKA_TOPIC}")
 
     # Initialize separate batch buffers
-    device_buffer = (
-        {}
-    )  # Dictionary to automatically deduplicate agents within the same batch window
-    event_buffer = []  # List to capture all sequential authentication logs
+    device_buffer = {}  # agent_id -> device_row (deduplicates within batch window)
+    event_buffer = []   # list of sequential auth log tuples
 
     last_flush_time = asyncio.get_event_loop().time()
 
     try:
         while True:
             try:
-                # Poll Kafka with a 1-second timeout so the loop doesn't block indefinitely
+                # Poll Kafka with a 1-second timeout
                 msg = await asyncio.wait_for(consumer.getone(), timeout=1.0)
                 payload = json.loads(msg.value.decode("utf-8"))
 
                 agent_id = payload.get("agent_id", "unknown_agent")
+                event_type = payload.get("event_type", "telemetry.snapshot")
+                observed_at_str = payload.get("observed_at") or payload.get("timestamp")
+                event_timestamp = _parse_timestamp(observed_at_str)
+                data = payload.get("data", {})
 
-                # Normalize the top-level payload timestamp
-                ts_str = payload.get(
-                    "timestamp", datetime.datetime.utcnow().isoformat()
-                ).replace("Z", "")
-                global_timestamp = datetime.datetime.fromisoformat(ts_str)
+                # --- 1. TELEMETRY SNAPSHOT (DEVICE INVENTORY & ASSETS) ---
+                if event_type == "telemetry.snapshot":
+                    network = data.get("network", {})
+                    platform_info = data.get("platform", {})
+                    system = data.get("system", {})
 
-                # Extract sub-metrics maps
-                metrics = payload.get("metrics", {})
-                network = metrics.get("network", {})
-                platform = metrics.get("platform", {})
-                system = metrics.get("system", {})
-
-                # --- PARSE AND STAGE DEVICE INVENTORY DATA ---
-                if network or platform:
                     device_row = (
                         agent_id,
                         str(network.get("hostname", "")),
                         str(network.get("ip-address", "")),
                         str(network.get("mac-address", "")),
-                        str(
-                            system.get("memory_info", {}).get("total_memory", "Unknown")
-                        ),
-                        str(platform.get("operating_system", "")),
-                        str(platform.get("operating_system_name", "")),
-                        str(platform.get("operating_system_version", "")),
-                        str(platform.get("operating_system_release", "")),
-                        str(
-                            platform.get("machine_architecture", "")
-                        ),  # Maps custom typo from agent payload Safely
+                        str(system.get("memory_info", {}).get("total_memory", "Unknown")),
+                        str(platform_info.get("operating_system", "")),
+                        str(platform_info.get("operating_system_name", "")),
+                        str(platform_info.get("operating_system_version", "")),
+                        str(platform_info.get("operating_system_release", "")),
+                        str(platform_info.get("machine_architecture", "")),
                         1,  # Staging 'is_latest' as True initially
-                        global_timestamp,
+                        event_timestamp,
                     )
-                    # Keying by agent_id keeps only the single newest state per agent inside this batch window
                     device_buffer[agent_id] = device_row
 
-                # --- PARSE AND STAGE SECURITY LOGIN ATTEMPTS ---
-                login_attempts = platform.get("login_attempts", [])
-                for attempt in login_attempts:
-                    event_ts_str = attempt.get("timestamp")
-                    event_timestamp = (
-                        datetime.datetime.fromisoformat(event_ts_str)
-                        if event_ts_str
-                        else global_timestamp
-                    )
+                # --- 2. SECURITY AUTHENTICATION EVENTS ---
+                elif event_type == "security.auth":
+                    auth_ts_str = data.get("timestamp")
+                    auth_timestamp = _parse_timestamp(auth_ts_str) if auth_ts_str else event_timestamp
 
                     event_row = (
                         agent_id,
-                        event_timestamp,
-                        int(attempt.get("event_id", 0)),
-                        str(attempt.get("status", "UNKNOWN")),
-                        str(attempt.get("username", "unknown")),
-                        str(attempt.get("domain", "Unknown")),
-                        str(attempt.get("logon_type", "Unknown")),
-                        str(attempt.get("source_ip", "Unknown")),
+                        auth_timestamp,
+                        int(data.get("event_id", 0)),
+                        str(data.get("status", "UNKNOWN")),
+                        str(data.get("username", "unknown")),
+                        str(data.get("domain", "Unknown")),
+                        str(data.get("logon_type", "Unknown")),
+                        str(data.get("source_ip", "Unknown")),
                     )
                     event_buffer.append(event_row)
 
+                # --- 3. AGENT HEALTH EVENTS ---
+                elif event_type == "agent.health":
+                    logger.debug(
+                        f"Agent health report [{agent_id}]: CPU {data.get('cpu_percent')}% | "
+                        f"Memory {data.get('memory_rss_mb')}MB | Queue Depth {data.get('queue_depth')} | "
+                        f"Dropped {data.get('dropped_events_total')}"
+                    )
+
             except asyncio.TimeoutError:
-                # Timeout hit; pass seamlessly to evaluate flushing thresholds below
                 pass
 
             # Evaluate tracking intervals
@@ -166,7 +169,6 @@ async def start_worker():
                     db_service.insert_events_batch(event_buffer)
 
                     # ── 3. Run Detection Engine on this event batch ────────────
-                    # Group events by agent_id for per-agent detection context
                     events_by_agent: dict = defaultdict(list)
                     for row in event_buffer:
                         events_by_agent[row[0]].append(row)
