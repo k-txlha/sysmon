@@ -1,16 +1,21 @@
 """
 backend/api/v1/transport.py
 
-High-throughput telemetry ingestion endpoint.
-Receives host metrics and Windows Security Event logs from agents,
-validates authorization if configured, tracks heartbeats,
-and streams the payload into Kafka.
+High-throughput EDR telemetry ingestion endpoint.
+Enforces the standardized Phase 0 EventEnvelope contract, validates agent
+authorization tokens, tracks real-time heartbeats, stamps server receipt time,
+and streams events into the Kafka pipeline.
 """
 
-from typing import Optional
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from __future__ import annotations
+
+import datetime
+from typing import Any, Dict, List, Optional, Union
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from pydantic import ValidationError
 
 from config.settings import settings
+from models.envelope import EventEnvelope, IngestionBatchRequest
 from services.agent_service import agent_service
 from services.producer import kafka_service
 from utils.logger import setup_logger
@@ -54,25 +59,72 @@ async def verify_agent_auth(
     status_code=status.HTTP_202_ACCEPTED,
     dependencies=[Depends(rate_limiter), Depends(verify_agent_auth)],
 )
-async def receive_telemetry(payload: dict):
+async def receive_telemetry(payload: Union[IngestionBatchRequest, EventEnvelope, List[EventEnvelope], Dict[str, Any]]):
+    """
+    Ingests standardized EDR EventEnvelope payloads.
+    Accepts a single EventEnvelope, an IngestionBatchRequest, or a list of EventEnvelopes.
+    Strictly validates against the EventEnvelope data contract.
+    """
     if not payload:
-        raise HTTPException(status_code=400, detail="Empty payload received.")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Empty payload received.",
+        )
 
-    # Record agent heartbeat
-    agent_id = (
-        payload.get("agent_id")
-        or payload.get("device_info", {}).get("agent_id")
-        or (payload.get("devices", [{}])[0].get("agent_id") if isinstance(payload.get("devices"), list) and payload.get("devices") else None)
-    )
-    if agent_id:
-        await agent_service.record_heartbeat(agent_id)
+    envelopes: List[EventEnvelope] = []
+    received_at_ts = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
     try:
-        await kafka_service.stream_data(settings.KAFKA_TOPIC, payload)
-        return {"status": "accepted", "message": "Log queued into pipeline."}
-    except Exception as e:
-        logger.error(f"[ERROR] Failed to push message to Kafka: {e}")
+        if isinstance(payload, IngestionBatchRequest):
+            envelopes = payload.events
+        elif isinstance(payload, EventEnvelope):
+            envelopes = [payload]
+        elif isinstance(payload, list):
+            envelopes = [
+                item if isinstance(item, EventEnvelope) else EventEnvelope.model_validate(item)
+                for item in payload
+            ]
+        elif isinstance(payload, dict):
+            if "events" in payload and isinstance(payload["events"], list):
+                envelopes = [
+                    EventEnvelope.model_validate(item) for item in payload["events"]
+                ]
+            else:
+                envelopes = [EventEnvelope.model_validate(payload)]
+    except (ValidationError, Exception) as val_err:
+        logger.warning(f"Rejected non-conforming telemetry payload: {val_err}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Pipeline ingestion failure.",
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid EventEnvelope schema: {val_err}",
         )
+
+    if not envelopes:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No valid event envelopes found in request.",
+        )
+
+    # Record heartbeats and stream each envelope with server received_at timestamp
+    unique_agents = set()
+    for env in envelopes:
+        env.received_at = received_at_ts
+        unique_agents.add(env.agent_id)
+        try:
+            await kafka_service.stream_data(settings.KAFKA_TOPIC, env.model_dump(mode="json"))
+        except Exception as e:
+            logger.error(f"Failed to push event {env.event_id} to Kafka: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Pipeline ingestion failure.",
+            )
+
+    # Record heartbeats for all distinct agents in this batch
+    for agent_id in unique_agents:
+        await agent_service.record_heartbeat(agent_id)
+
+    logger.debug(f"Ingested {len(envelopes)} event envelope(s) from {len(unique_agents)} agent(s).")
+    return {
+        "status": "accepted",
+        "ingested_count": len(envelopes),
+        "received_at": received_at_ts,
+    }

@@ -26,8 +26,14 @@ BACKEND_DIR = Path(__file__).resolve().parent.parent
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
+import importlib.util
+spec = importlib.util.spec_from_file_location("backend_main", BACKEND_DIR / "main.py")
+backend_main = importlib.util.module_from_spec(spec)
+sys.modules["backend_main"] = backend_main
+spec.loader.exec_module(backend_main)
+app = backend_main.app
+
 from fastapi.testclient import TestClient
-from main import app
 from services.ch_service import ch_service
 
 
@@ -319,16 +325,67 @@ class TestBackendAPI(unittest.TestCase):
     # -----------------------------------------------------------------------
     # 7. Telemetry Transport & Auth
     # -----------------------------------------------------------------------
-    def test_telemetry_ingestion_success(self):
+    def test_telemetry_envelope_ingestion_success(self):
         payload = {
+            "event_id": "11111111-2222-3333-4444-555555555555",
+            "schema_version": 1,
+            "tenant_id": "default",
+            "host_id": "TEST-HOST",
             "agent_id": "test-agent-99",
-            "device_info": {"hostname": "TEST-HOST"},
-            "events": [],
+            "event_type": "telemetry.snapshot",
+            "observed_at": "2026-09-16T14:30:00.000Z",
+            "sequence": 1,
+            "source": "windows_agent",
+            "severity": "informational",
+            "data": {"cpu": 15.0},
         }
         with patch("services.producer.kafka_service.stream_data", return_value=None):
             response = self.client.post("/api/v1/telemetry", json=payload)
             self.assertEqual(response.status_code, 202)
-            self.assertEqual(response.json()["status"], "accepted")
+            data = response.json()
+            self.assertEqual(data["status"], "accepted")
+            self.assertEqual(data["ingested_count"], 1)
+            self.assertIn("received_at", data)
+
+    def test_telemetry_batch_envelope_ingestion_success(self):
+        payload = {
+            "events": [
+                {
+                    "event_id": "11111111-2222-3333-4444-555555555551",
+                    "schema_version": 1,
+                    "host_id": "TEST-HOST",
+                    "agent_id": "test-agent-99",
+                    "event_type": "telemetry.snapshot",
+                    "observed_at": "2026-09-16T14:30:00.000Z",
+                    "sequence": 1,
+                    "source": "windows_agent",
+                    "severity": "informational",
+                    "data": {},
+                },
+                {
+                    "event_id": "11111111-2222-3333-4444-555555555552",
+                    "schema_version": 1,
+                    "host_id": "TEST-HOST",
+                    "agent_id": "test-agent-99",
+                    "event_type": "security.auth",
+                    "observed_at": "2026-09-16T14:30:01.000Z",
+                    "sequence": 2,
+                    "source": "windows_agent",
+                    "severity": "medium",
+                    "data": {"status": "FAILURE"},
+                },
+            ]
+        }
+        with patch("services.producer.kafka_service.stream_data", return_value=None):
+            response = self.client.post("/api/v1/telemetry", json=payload)
+            self.assertEqual(response.status_code, 202)
+            self.assertEqual(response.json()["ingested_count"], 2)
+
+    def test_telemetry_invalid_schema_rejected(self):
+        # Invalid schema missing required envelope fields
+        invalid_payload = {"legacy_data": "unknown_format"}
+        response = self.client.post("/api/v1/telemetry", json=invalid_payload)
+        self.assertEqual(response.status_code, 422)
 
     def test_telemetry_empty_payload_rejected(self):
         response = self.client.post("/api/v1/telemetry", json={})
