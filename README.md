@@ -159,7 +159,7 @@ A high-performance, modular, and cloud-ready **Endpoint Detection & Response (ED
 
 ## ✨ Key Features & Data Contracts
 
-### 1. 📜 Standardized Event Envelope (Phase 0 Data Contract)
+### 1. 📜 Standardized Event Envelope
 Every event transmitted through Sysmon adheres to the strict EDR Event Envelope schema:
 ```json
 {
@@ -185,7 +185,7 @@ Every event transmitted through Sysmon adheres to the strict EDR Event Envelope 
 }
 ```
 
-### 2. 🛡️ Agent Resilience & Offline Disk Buffering (Phase 1)
+### 2. 🛡️ Agent Resilience & Offline Disk Buffering
 - **Local Bounded Disk Buffer (`agent/utils/buffer.py`)**: Events are staged in an SQLite WAL-mode FIFO queue. If the backend is unreachable or rate-limits with 429, events remain safely stored on disk and drain automatically upon reconnection.
 - **Agent Health Telemetry (`agent.health`)**: Automatically captures and transmits agent process memory (RSS MB), process CPU usage, local queue depth, and dropped event counters.
 - **Zero Event Loss**: Monotonic sequence numbering per session and disk quota enforcement.
