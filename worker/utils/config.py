@@ -13,7 +13,7 @@ class Config:
                     line = line.strip()
                     if line and not line.startswith("#"):
                         key, val = line.split("=", 1)
-                        os.environ[key.strip()] = val.strip()
+                        os.environ.setdefault(key.strip(), val.strip())
 
         self.CLICKHOUSE_HOST = os.getenv("CLICKHOUSE_HOST", "localhost")
         self.CLICKHOUSE_PORT = os.getenv("CLICKHOUSE_PORT", 8443)
