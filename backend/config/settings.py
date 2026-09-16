@@ -14,7 +14,7 @@ class BackendSettings:
                     line = line.strip()
                     if line and not line.startswith("#"):
                         key, val = line.split("=", 1)
-                        os.environ[key.strip()] = val.strip()
+                        os.environ.setdefault(key.strip(), val.strip())
         self.PORT = int(os.getenv("PORT", 8000))
         self.KAFKA_BOOTSTRAP_SERVERS = os.getenv(
             "KAFKA_BOOTSTRAP_SERVERS", "localhost:29092"
