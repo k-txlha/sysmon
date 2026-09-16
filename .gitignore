@@ -1,3 +1,36 @@
-sysmon/*
-__pycache__
+# Python & Environment
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyd
 .env
+.env.*
+!.env.example
+.pytest_cache/
+.agent_buffer.db*
+sysmon/*
+
+# Frontend & Node (Dashboard)
+node_modules/
+dist/
+dist-ssr/
+*.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Logs & Runtime
+*.log
+logs/
+
+# IDE & OS Artifacts
+.vscode/
+!.vscode/extensions.json
+.idea/
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
