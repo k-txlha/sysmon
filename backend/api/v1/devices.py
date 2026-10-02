@@ -49,7 +49,7 @@ async def get_device_statistics():
 
 @router.get("/{agent_id}", status_code=status.HTTP_200_OK)
 async def get_device(agent_id: str):
-    """Retrieve the latest profile snapshot for a specific agent/device."""
+    """Retrieve the latest profile snapshot and health telemetry for a specific agent/device."""
     try:
         device = ch_service.get_device_by_agent_id(agent_id)
         if not device:
@@ -57,6 +57,7 @@ async def get_device(agent_id: str):
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Device with agent_id '{agent_id}' not found.",
             )
+        device["health"] = ch_service.get_agent_health(agent_id)
         return device
     except HTTPException:
         raise
@@ -65,6 +66,26 @@ async def get_device(agent_id: str):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Database error while querying device: {str(e)}",
+        )
+
+
+@router.get("/{agent_id}/health", status_code=status.HTTP_200_OK)
+async def get_device_health(agent_id: str):
+    """Retrieve the latest health diagnostic telemetry for an agent."""
+    try:
+        health = ch_service.get_agent_health(agent_id)
+        if not health:
+            return {
+                "agent_id": agent_id,
+                "status": "no_health_data",
+                "health": None,
+            }
+        return {"agent_id": agent_id, "status": "active", "health": health}
+    except Exception as e:
+        logger.error(f"Error fetching health for '{agent_id}': {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to query agent health: {str(e)}",
         )
 
 

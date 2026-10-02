@@ -322,6 +322,58 @@ class TestBackendAPI(unittest.TestCase):
         self.assertEqual(del_res.status_code, 200)
         self.assertEqual(del_res.json()["status"], "success")
 
+    def test_agent_enroll_handshake_success(self):
+        # 1. Provision a bootstrap token
+        tok_res = self.client.post("/api/v1/agents/token", json={"description": "Bootstrap"})
+        bootstrap_tok = tok_res.json()["token"]
+
+        # 2. Perform agent enrollment
+        enroll_res = self.client.post(
+            "/api/v1/agents/enroll",
+            json={
+                "bootstrap_token": bootstrap_tok,
+                "hostname": "test-workstation-99",
+                "operating_system": "Windows 11 Pro",
+                "mac_address": "00:11:22:33:44:55",
+                "machine_architecture": "AMD64",
+            },
+        )
+        self.assertEqual(enroll_res.status_code, 200)
+        data = enroll_res.json()
+        self.assertEqual(data["status"], "enrolled")
+        self.assertEqual(data["agent_id"], "test-workstation-99")
+        self.assertTrue(data["agent_token"].startswith("sysmon_agent_"))
+
+    def test_agent_enroll_handshake_invalid_token(self):
+        enroll_res = self.client.post(
+            "/api/v1/agents/enroll",
+            json={
+                "bootstrap_token": "sysmon_invalid_token_999",
+                "hostname": "fake-host",
+                "operating_system": "Linux",
+                "mac_address": "00:00:00:00:00:00",
+            },
+        )
+        self.assertEqual(enroll_res.status_code, 401)
+
+    def test_device_health_endpoint(self):
+        mock_health = {
+            "agent_id": "test-agent-01",
+            "timestamp": "2026-10-02T12:00:00Z",
+            "cpu_percent": 1.5,
+            "memory_rss_mb": 42.0,
+            "queue_depth": 0,
+            "dropped_events_total": 0,
+            "buffer_bytes": 1024,
+            "uptime_seconds": 3600.0,
+        }
+        with patch.object(ch_service, "get_agent_health", return_value=mock_health):
+            res = self.client.get("/api/v1/devices/test-agent-01/health")
+            self.assertEqual(res.status_code, 200)
+            data = res.json()
+            self.assertEqual(data["status"], "active")
+            self.assertEqual(data["health"]["cpu_percent"], 1.5)
+
     # -----------------------------------------------------------------------
     # 7. Telemetry Transport & Auth
     # -----------------------------------------------------------------------
@@ -339,7 +391,7 @@ class TestBackendAPI(unittest.TestCase):
             "severity": "informational",
             "data": {"cpu": 15.0},
         }
-        with patch("services.producer.kafka_service.stream_data", return_value=None):
+        with patch("services.producer.kafka_service.stream_batch", return_value=None):
             response = self.client.post("/api/v1/telemetry", json=payload)
             self.assertEqual(response.status_code, 202)
             data = response.json()
@@ -376,7 +428,7 @@ class TestBackendAPI(unittest.TestCase):
                 },
             ]
         }
-        with patch("services.producer.kafka_service.stream_data", return_value=None):
+        with patch("services.producer.kafka_service.stream_batch", return_value=None):
             response = self.client.post("/api/v1/telemetry", json=payload)
             self.assertEqual(response.status_code, 202)
             self.assertEqual(response.json()["ingested_count"], 2)

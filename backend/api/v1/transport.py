@@ -104,19 +104,22 @@ async def receive_telemetry(payload: Union[IngestionBatchRequest, EventEnvelope,
             detail="No valid event envelopes found in request.",
         )
 
-    # Record heartbeats and stream each envelope with server received_at timestamp
+    # Stamp server receipt time and stream batch to Kafka
     unique_agents = set()
+    raw_envelopes = []
     for env in envelopes:
         env.received_at = received_at_ts
         unique_agents.add(env.agent_id)
-        try:
-            await kafka_service.stream_data(settings.KAFKA_TOPIC, env.model_dump(mode="json"))
-        except Exception as e:
-            logger.error(f"Failed to push event {env.event_id} to Kafka: {e}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Pipeline ingestion failure.",
-            )
+        raw_envelopes.append(env.model_dump(mode="json"))
+
+    try:
+        await kafka_service.stream_batch(settings.KAFKA_TOPIC, raw_envelopes)
+    except Exception as e:
+        logger.error(f"Failed to stream envelope batch to Kafka: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Pipeline ingestion failure.",
+        )
 
     # Record heartbeats for all distinct agents in this batch
     for agent_id in unique_agents:

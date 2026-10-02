@@ -408,6 +408,42 @@ class ClickHouseQueryService:
             )
         return history
 
+    def get_agent_health(self, agent_id: str) -> Optional[Dict[str, Any]]:
+        """Fetches the latest health diagnostics report for a given agent_id."""
+        client = self._ensure_client()
+        query = """
+            SELECT
+                agent_id,
+                timestamp,
+                cpu_percent,
+                memory_rss_mb,
+                queue_depth,
+                dropped_events_total,
+                buffer_bytes,
+                uptime_seconds
+            FROM AGENT_HEALTH
+            WHERE agent_id = %(agent_id)s
+            ORDER BY timestamp DESC
+            LIMIT 1
+        """
+        try:
+            res = client.query(query, parameters={"agent_id": agent_id})
+            if res.result_rows:
+                row = res.result_rows[0]
+                return {
+                    "agent_id": row[0],
+                    "timestamp": row[1].isoformat() if hasattr(row[1], "isoformat") else str(row[1]),
+                    "cpu_percent": row[2],
+                    "memory_rss_mb": row[3],
+                    "queue_depth": row[4],
+                    "dropped_events_total": row[5],
+                    "buffer_bytes": row[6],
+                    "uptime_seconds": row[7],
+                }
+        except Exception as e:
+            logger.warning(f"Failed to query AGENT_HEALTH: {e}")
+        return None
+
     def get_device_stats(self) -> Dict[str, Any]:
         """Calculates device metrics: online/offline counts and OS breakdown."""
         devices = self.get_devices()
