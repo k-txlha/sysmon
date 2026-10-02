@@ -54,7 +54,6 @@ class ClickHouseService:
                             ORDER BY (agent_id, timestamp, event_id);
                             """)
 
-        # ALERTS — fired detection rule hits, persisted for dashboard queries
         self.client.command("""
                             CREATE TABLE IF NOT EXISTS ALERTS (
                                 alert_id     UUID DEFAULT generateUUIDv4(),
@@ -67,6 +66,20 @@ class ClickHouseService:
                                 resolved     UInt8 DEFAULT 0
                                 ) ENGINE = MergeTree()
                             ORDER BY (triggered_at, severity, agent_id);
+                            """)
+
+        self.client.command("""
+                            CREATE TABLE IF NOT EXISTS AGENT_HEALTH (
+                                agent_id             String,
+                                timestamp            DateTime64(3, 'UTC'),
+                                cpu_percent          Float32,
+                                memory_rss_mb        Float32,
+                                queue_depth          UInt32,
+                                dropped_events_total UInt32,
+                                buffer_bytes         UInt64,
+                                uptime_seconds       Float32
+                                ) ENGINE = MergeTree()
+                            ORDER BY (agent_id, timestamp);
                             """)
         logger.info("ClickHouse schemas initialized successfully.")
 
@@ -153,3 +166,26 @@ class ClickHouseService:
             logger.info(f"Persisted {len(rows)} alert(s) to ALERTS table.")
         except Exception as e:
             logger.error(f"Failed to batch insert into ALERTS: {e}")
+
+    def insert_health_batch(self, rows: list) -> None:
+        """Persists a batch of agent health diagnostic records."""
+        if not rows:
+            return
+        try:
+            self.client.insert(
+                f"{settings.CLICKHOUSE_DB}.AGENT_HEALTH",
+                rows,
+                column_names=[
+                    "agent_id",
+                    "timestamp",
+                    "cpu_percent",
+                    "memory_rss_mb",
+                    "queue_depth",
+                    "dropped_events_total",
+                    "buffer_bytes",
+                    "uptime_seconds",
+                ],
+            )
+            logger.info(f"Persisted {len(rows)} health metrics record(s) to AGENT_HEALTH table.")
+        except Exception as e:
+            logger.error(f"Failed to batch insert into AGENT_HEALTH: {e}")

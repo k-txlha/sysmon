@@ -55,6 +55,7 @@ async def start_worker():
     # Initialize separate batch buffers
     device_buffer = {}  # agent_id -> device_row (deduplicates within batch window)
     event_buffer = []   # list of sequential auth log tuples
+    health_buffer = []  # list of agent health diagnostic tuples
 
     last_flush_time = asyncio.get_event_loop().time()
 
@@ -112,11 +113,17 @@ async def start_worker():
 
                 # --- 3. AGENT HEALTH EVENTS ---
                 elif event_type == "agent.health":
-                    logger.debug(
-                        f"Agent health report [{agent_id}]: CPU {data.get('cpu_percent')}% | "
-                        f"Memory {data.get('memory_rss_mb')}MB | Queue Depth {data.get('queue_depth')} | "
-                        f"Dropped {data.get('dropped_events_total')}"
+                    health_row = (
+                        agent_id,
+                        event_timestamp,
+                        float(data.get("cpu_percent", 0.0)),
+                        float(data.get("memory_rss_mb", 0.0)),
+                        int(data.get("queue_depth", 0)),
+                        int(data.get("dropped_events_total", 0)),
+                        int(data.get("buffer_bytes", 0)),
+                        float(data.get("uptime_seconds", 0.0)),
                     )
+                    health_buffer.append(health_row)
 
             except asyncio.TimeoutError:
                 pass
@@ -129,8 +136,9 @@ async def start_worker():
             if (
                 len(event_buffer) >= MAX_BATCH_SIZE
                 or len(device_buffer) >= MAX_BATCH_SIZE
+                or len(health_buffer) >= MAX_BATCH_SIZE
             ) or (
-                time_since_flush >= MAX_WAIT_TIME and (event_buffer or device_buffer)
+                time_since_flush >= MAX_WAIT_TIME and (event_buffer or device_buffer or health_buffer)
             ):
 
                 # 1. Flush Device Asset Updates
@@ -188,6 +196,11 @@ async def start_worker():
                         dispatcher.dispatch(all_alerts)
 
                     event_buffer.clear()
+
+                # 3. Flush Agent Health Diagnostics
+                if health_buffer:
+                    db_service.insert_health_batch(health_buffer)
+                    health_buffer.clear()
 
                 # Reset execution timer
                 last_flush_time = current_time
