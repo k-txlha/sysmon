@@ -34,7 +34,7 @@ A high-performance, modular, and cloud-ready **Endpoint Detection & Response (ED
                           │     Backend Gateway      │
                           │        (FastAPI)         │
                           └────────────┬─────────────┘
-                                       │ Produce EventEnvelopes
+                                       │ Produce EventEnvelopes (Concurrent Batch)
                                        ▼
                           ┌──────────────────────────┐
                           │       Apache Kafka       │
@@ -52,8 +52,8 @@ A high-performance, modular, and cloud-ready **Endpoint Detection & Response (ED
 ┌─────────────────────────┐                              ┌─────────────────────────┐
 │    Detection Engine     │                              │   ClickHouse Database   │
 │  (YAML Rule Evaluator)  │                              │ (DEVICES, EVENTS, ALERTS│
-└────────────┬────────────┘                              └────────────▲────────────┘
-             │                                                        │
+└────────────┬────────────┘                              │      AGENT_HEALTH)      │
+             │                                           └────────────▲────────────┘
              ▼ Fired Alerts                                           │ Query Analytics
 ┌─────────────────────────┐                              ┌────────────┴────────────┐
 │    Alert Dispatcher     │                              │   ClickHouse Service    │
@@ -86,15 +86,17 @@ A high-performance, modular, and cloud-ready **Endpoint Detection & Response (ED
 │   │   ├── config.py              # Strongly-typed environment configuration loader
 │   │   ├── logger.py              # Structured logging utility
 │   │   └── transport.py           # Resilient HTTP transport with queue drain & backoff
-│   ├── tests/                     # Agent test suite (buffer, envelope, assembler)
-│   ├── .env                       # Agent configuration
+│   ├── tests/                     # Agent test suites (buffer, envelope, assembler, service, enroll)
+│   ├── enroll.py                  # Automated bootstrap enrollment client & CLI
+│   ├── service.py                 # OS background service manager (systemd & Windows)
+│   ├── .env                       # Local agent configuration
 │   └── main.py                    # Agent execution daemon & collection loop
 │
 ├── backend/                       # REST API & Telemetry Ingestion Gateway
 │   ├── api/v1/                    # Versioned REST endpoints
-│   │   ├── agents.py              # Agent enrollment tokens & health status
+│   │   ├── agents.py              # Agent tokens, registration & enrollment handshake
 │   │   ├── alerts.py              # Alert query, stats & status management
-│   │   ├── devices.py             # Host inventory & hardware/OS analytics
+│   │   ├── devices.py             # Host inventory, hardware/OS analytics & health telemetry
 │   │   ├── events.py              # Security audit log & raw event queries
 │   │   ├── health.py              # System health & dependency status
 │   │   ├── rules.py               # Detection rule CRUD & YAML validation
@@ -104,9 +106,9 @@ A high-performance, modular, and cloud-ready **Endpoint Detection & Response (ED
 │   ├── models/                    # Ingestion data models & batch schemas
 │   │   └── envelope.py            # Backend EventEnvelope & IngestionBatchRequest models
 │   ├── services/                  # Business logic & query services
-│   │   ├── agent_service.py       # Agent token authentication & heartbeat tracking
+│   │   ├── agent_service.py       # Agent token authentication, enrollment & heartbeat tracking
 │   │   ├── ch_service.py          # ClickHouse analytical query engine
-│   │   └── producer.py            # Asynchronous Kafka producer service
+│   │   └── producer.py            # High-throughput asynchronous Kafka producer service
 │   ├── tests/                     # Backend test suite (test_api.py)
 │   ├── utils/                     # Backend utilities (logger, rate limiter)
 │   ├── .env                       # Backend environment configuration
@@ -159,7 +161,7 @@ A high-performance, modular, and cloud-ready **Endpoint Detection & Response (ED
 
 ## ✨ Key Features & Data Contracts
 
-### 1. 📜 Standardized Event Envelope
+### 1. 📜 Standardized Event Envelope (Phase 0 Data Contract)
 Every event transmitted through Sysmon adheres to the strict EDR Event Envelope schema:
 ```json
 {
@@ -169,8 +171,8 @@ Every event transmitted through Sysmon adheres to the strict EDR Event Envelope 
   "host_id": "WORKSTATION-01",
   "agent_id": "WORKSTATION-01",
   "event_type": "security.auth",
-  "observed_at": "2026-09-16T14:30:00.000000Z",
-  "received_at": "2026-09-16T14:30:00.085000Z",
+  "observed_at": "2026-10-02T12:00:00.000000Z",
+  "received_at": "2026-10-02T12:00:00.085000Z",
   "sequence": 142,
   "source": "windows_agent",
   "severity": "medium",
@@ -185,16 +187,17 @@ Every event transmitted through Sysmon adheres to the strict EDR Event Envelope 
 }
 ```
 
-### 2. 🛡️ Agent Resilience & Offline Disk Buffering
+### 2. 🛡️ Agent Resilience, Local Disk Buffer & Service Management (Phase 1)
 - **Local Bounded Disk Buffer (`agent/utils/buffer.py`)**: Events are staged in an SQLite WAL-mode FIFO queue. If the backend is unreachable or rate-limits with 429, events remain safely stored on disk and drain automatically upon reconnection.
-- **Agent Health Telemetry (`agent.health`)**: Automatically captures and transmits agent process memory (RSS MB), process CPU usage, local queue depth, and dropped event counters.
-- **Zero Event Loss**: Monotonic sequence numbering per session and disk quota enforcement.
+- **OS Service Management (`agent/service.py`)**: Install, start, stop, and query the agent as a native OS service on boot (Linux `systemd` unit or Windows background service).
+- **Automated Bootstrap Enrollment (`agent/enroll.py`)**: Agent exchanges a bootstrap token for permanent, dedicated agent credentials via `POST /api/v1/agents/enroll`.
+- **Agent Health Diagnostics (`agent.health`)**: Automatically captures and transmits agent process memory (RSS MB), process CPU usage, local queue depth, and dropped event counters, persisted in ClickHouse `AGENT_HEALTH` table.
 
 ### 3. ⚡ Ingestion Gateway & Security Analytics API (`backend/`)
 - **Strict Ingestion**: Validates all incoming payloads against `EventEnvelope` and `IngestionBatchRequest` schemas; rejects malformed inputs with `HTTP 422`.
+- **Concurrent Batch Streaming**: High-throughput non-blocking streaming to Kafka topics using `asyncio.gather`.
 - **Server-Side Timestamping**: Adds `received_at` UTC timestamps and records live heartbeats in Redis.
-- **Analytical Query Engine**: `ClickHouseQueryService` provides aggregated KPI statistics, device history, paginated event searches, and threat analytics.
-- **Token Management**: Per-agent enrollment tokens with rotation and revocation.
+- **Analytical Query Engine**: `ClickHouseQueryService` provides aggregated KPI statistics, device history, agent health diagnostics, and threat analytics.
 
 ### 4. 🧠 Real-Time Detection Engine (`worker/detection/`)
 - Declarative YAML rules with stateful sliding time windows.
@@ -226,18 +229,20 @@ Interactive OpenAPI documentation is available at `http://localhost:8000/docs`.
 | `PATCH` | `/api/v1/alerts/{alert_id}/status` | Update alert resolution status (`0` = Open, `1` = Resolved) |
 | `GET` | `/api/v1/devices` | Query device inventory, operating system details, and online status |
 | `GET` | `/api/v1/devices/stats` | Aggregated device metrics (active hosts, OS distribution) |
-| `GET` | `/api/v1/devices/{agent_id}` | Detailed hardware, network, and telemetry for a specific device |
+| `GET` | `/api/v1/devices/{agent_id}` | Detailed hardware, network, and health telemetry for a specific device |
+| `GET` | `/api/v1/devices/{agent_id}/health` | Query latest health diagnostics report (CPU, RSS, queue depth) |
 | `GET` | `/api/v1/devices/{agent_id}/history` | Historical telemetry snapshots for an agent |
 | `GET` | `/api/v1/events` | Query raw security authentication logs with filters and pagination |
 | `GET` | `/api/v1/rules` | List all active detection rules |
 | `POST` | `/api/v1/rules/{rule_name}/toggle` | Enable or disable a detection rule |
 | `GET` | `/api/v1/agents/tokens` | List registered agent enrollment tokens |
 | `POST` | `/api/v1/agents/token` | Generate a new secure agent enrollment token |
+| `POST` | `/api/v1/agents/enroll` | Bootstrap enrollment handshake to provision agent credentials |
 | `DELETE` | `/api/v1/agents/tokens/{token}` | Revoke an existing agent enrollment token |
 
 ---
 
-## ⚡ Quick Start
+## ⚡ Quick Start & Deployment
 
 ### 1. Prerequisites
 - **Python 3.11+**
@@ -268,9 +273,7 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-### 4. Launch Services
-
-Open separate terminal windows for each component:
+### 4. Launch Backend, Worker & Dashboard
 
 ```powershell
 # Terminal 1: Backend API Gateway
@@ -279,13 +282,24 @@ python backend\main.py
 # Terminal 2: Detection Worker
 python worker\main.py
 
-# Terminal 3: Telemetry Agent
-python agent\main.py
-
-# Terminal 4: Frontend Dashboard (Optional)
+# Terminal 3: Frontend Dashboard
 cd dashboard
 npm install
 npm run dev
+```
+
+### 5. Deploy & Run Agent on Endpoints
+
+```powershell
+# 1. Enroll the agent using a bootstrap token
+python -m agent.enroll --token <BOOTSTRAP_TOKEN> --backend http://<BACKEND_HOST>:8000
+
+# 2. Install and start as an automatic OS background service
+python -m agent.service install
+python -m agent.service start
+
+# 3. Check service status
+python -m agent.service status
 ```
 
 ---
@@ -301,13 +315,13 @@ python run_tests.py
 Or run individual component test suites:
 
 ```powershell
-# Agent Tests (Buffer, Envelopes, Assembler)
+# Agent Tests (Buffer, Envelopes, Assembler, Service, Enrollment) - 18 Tests
 python -m pytest agent/tests -o pythonpath=agent -v
 
-# Backend Tests (REST API, Envelope Ingestion, Tokens)
+# Backend Tests (REST API, Ingestion, Enrollment, Health) - 23 Tests
 python -m pytest backend/tests -o pythonpath=backend -v
 
-# Worker Tests (Detection Engine, Sliding Windows, Rule Fixtures)
+# Worker Tests (Detection Engine, Sliding Windows, Rules) - 19 Tests
 python -m pytest worker/tests -o pythonpath=worker -v
 ```
 
@@ -319,7 +333,7 @@ python -m pytest worker/tests -o pythonpath=worker -v
 | Variable | Default | Description |
 |---|---|---|
 | `SIEM_BACKEND_URL` | `http://127.0.0.1:8000/api/v1/telemetry` | Backend ingestion endpoint URL |
-| `SIEM_AGENT_TOKEN` | `""` | Optional enrollment token for authenticated ingestion |
+| `SIEM_AGENT_TOKEN` | `""` | Provisioned agent token for authenticated ingestion |
 | `SIEM_COLLECTION_INTERVAL`| `5` | Polling and collection interval in seconds |
 | `SIEM_BUFFER_DB_PATH` | `.agent_buffer.db` | Local SQLite database file for offline buffering |
 | `SIEM_BUFFER_MAX_EVENTS` | `25000` | Maximum number of pending events held in buffer |
