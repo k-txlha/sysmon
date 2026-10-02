@@ -253,6 +253,48 @@ export default function Devices() {
               </div>
             </div>
 
+            {/* Agent Health & Queue Telemetry (Phase 1) */}
+            {selectedDevice.health && (
+              <div className="drawer-section">
+                <h4 className="section-title">
+                  <Activity size={14} className="text-accent-green" />
+                  Agent Health & Diagnostics
+                </h4>
+                <div className="info-grid">
+                  <div className="info-box">
+                    <span className="info-label">Agent Process CPU</span>
+                    <span className="info-value font-mono">{selectedDevice.health.cpu_percent}%</span>
+                  </div>
+                  <div className="info-box">
+                    <span className="info-label">Agent Memory (RSS)</span>
+                    <span className="info-value font-mono">{selectedDevice.health.memory_rss_mb} MB</span>
+                  </div>
+                  <div className="info-box">
+                    <span className="info-label">Buffer Queue Depth</span>
+                    <span className="info-value font-mono">{selectedDevice.health.queue_depth} events</span>
+                  </div>
+                  <div className="info-box">
+                    <span className="info-label">Dropped Events</span>
+                    <span className={`info-value font-mono ${selectedDevice.health.dropped_events_total > 0 ? 'text-accent-red' : 'text-accent-green'}`}>
+                      {selectedDevice.health.dropped_events_total}
+                    </span>
+                  </div>
+                  <div className="info-box">
+                    <span className="info-label">Agent Uptime</span>
+                    <span className="info-value font-mono">
+                      {Math.floor(selectedDevice.health.uptime_seconds / 3600)}h {Math.floor((selectedDevice.health.uptime_seconds % 3600) / 60)}m
+                    </span>
+                  </div>
+                  <div className="info-box">
+                    <span className="info-label">Health Report Time</span>
+                    <span className="info-value text-xs">
+                      {new Date(selectedDevice.health.timestamp).toLocaleTimeString()}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Telemetry Snapshot History */}
             <div className="drawer-section">
               <h4 className="section-title">Telemetry Snapshot History</h4>
