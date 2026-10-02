@@ -61,7 +61,7 @@ def send_batch_to_backend(events: List[Dict[str, Any]]) -> bool:
             settings.BACKEND_URL,
             json=payload,
             headers=_get_headers(),
-            timeout=5.0,
+            timeout=15.0,
         )
 
         if response.status_code in [200, 202]:

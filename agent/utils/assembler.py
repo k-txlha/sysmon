@@ -51,7 +51,9 @@ class TelemetryAssembler:
         self._sequence += 1
         return self._sequence
 
-    def assemble(self, queue_depth: int = 0, dropped_events_total: int = 0, buffer_bytes: int = 0) -> List[Dict[str, Any]]:
+    def assemble(
+        self, queue_depth: int = 0, dropped_events_total: int = 0, buffer_bytes: int = 0
+    ) -> List[Dict[str, Any]]:
         """
         Polls active collectors and generates a batch of standardized EventEnvelope dictionaries.
         """
@@ -93,7 +95,9 @@ class TelemetryAssembler:
             # --- B. Individual Security Authentication Events ---
             for attempt in login_attempts:
                 is_failure = str(attempt.get("status", "")).upper() == "FAILURE"
-                severity = SeverityLevel.MEDIUM if is_failure else SeverityLevel.INFORMATIONAL
+                severity = (
+                    SeverityLevel.MEDIUM if is_failure else SeverityLevel.INFORMATIONAL
+                )
 
                 auth_observed = attempt.get("timestamp")
                 if not auth_observed:
@@ -146,7 +150,9 @@ class TelemetryAssembler:
             )
             envelopes.append(health_envelope.to_dict())
 
-            logger.info(f"Successfully packaged {len(envelopes)} standardized EventEnvelope(s).")
+            logger.info(
+                f"Successfully packaged {len(envelopes)} standardized EventEnvelope(s)."
+            )
             return envelopes
 
         except Exception as e:

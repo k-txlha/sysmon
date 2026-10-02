@@ -1,5 +1,5 @@
 import platform
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from collectors.base import BaseOSCollector
 from utils.logger import setup_logger
 
@@ -19,7 +19,7 @@ class WindowsCollector(BaseOSCollector):
     Windows-specific telemetry and security event collector:
     - Queries Windows platform and OS version details
     - Reads Windows Event Log (Security channel) for Event IDs 4624 (Logon Success) and 4625 (Logon Failure)
-    - Maps logon types (Interactive, Network, RDP, Service) and extracts source IP
+    - Incrementally tracks RecordNumber to prevent duplicate historical event emission
     """
 
     LOGON_TYPES = {
@@ -32,6 +32,10 @@ class WindowsCollector(BaseOSCollector):
     }
 
     SYSTEM_ACCOUNTS = {"SYSTEM", "LOCAL SERVICE", "NETWORK SERVICE"}
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._last_record_number: Optional[int] = None
 
     def get_platform_info(self) -> Dict[str, Any]:
         """Collects Windows platform and OS details."""
@@ -46,11 +50,9 @@ class WindowsCollector(BaseOSCollector):
     def get_login_attempts(self, max_records: int = 50) -> List[Dict[str, Any]]:
         """
         Reads recent Security event logs from the Windows Event Log API.
+        Only returns new events since the last collection tick.
         """
         if not win32evtlog:
-            logger.warning(
-                "win32evtlog is unavailable. Skipping Windows Security log extraction."
-            )
             return []
 
         server = "localhost"
@@ -64,6 +66,7 @@ class WindowsCollector(BaseOSCollector):
                 | win32evtlog.EVENTLOG_SEQUENTIAL_READ
             )
             count = 0
+            highest_record_seen = self._last_record_number
 
             while True:
                 events = win32evtlog.ReadEventLog(hand, flags, 0)
@@ -71,6 +74,15 @@ class WindowsCollector(BaseOSCollector):
                     break
 
                 for event in events:
+                    record_num = getattr(event, "RecordNumber", None)
+                    if record_num is not None:
+                        if highest_record_seen is None or record_num > highest_record_seen:
+                            highest_record_seen = record_num
+
+                        # If we have a baseline and encountered an already processed record, stop
+                        if self._last_record_number is not None and record_num <= self._last_record_number:
+                            break
+
                     event_id = event.EventID & 0xFFFF
 
                     # 4624 = Success, 4625 = Failure
@@ -127,7 +139,11 @@ class WindowsCollector(BaseOSCollector):
                         if count >= max_records:
                             break
 
+                if self._last_record_number is not None and record_num is not None and record_num <= self._last_record_number:
+                    break
+
             win32evtlog.CloseEventLog(hand)
+            self._last_record_number = highest_record_seen
 
         except Exception as e:
             logger.error(f"Failed to read Windows Security Event Log: {e}")
