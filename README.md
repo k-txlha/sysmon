@@ -187,7 +187,7 @@ Every event transmitted through Sysmon adheres to the strict EDR Event Envelope 
 }
 ```
 
-### 2. 🛡️ Agent Resilience, Local Disk Buffer & Service Management (Phase 1)
+### 2. 🛡️ Agent Resilience, Local Disk Buffer & Service Management
 - **Local Bounded Disk Buffer (`agent/utils/buffer.py`)**: Events are staged in an SQLite WAL-mode FIFO queue. If the backend is unreachable or rate-limits with 429, events remain safely stored on disk and drain automatically upon reconnection.
 - **OS Service Management (`agent/service.py`)**: Install, start, stop, and query the agent as a native OS service on boot (Linux `systemd` unit or Windows background service).
 - **Automated Bootstrap Enrollment (`agent/enroll.py`)**: Agent exchanges a bootstrap token for permanent, dedicated agent credentials via `POST /api/v1/agents/enroll`.
