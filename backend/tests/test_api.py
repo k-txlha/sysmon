@@ -195,7 +195,8 @@ class TestBackendAPI(unittest.TestCase):
             "last_seen": "2026-09-06T12:00:00Z",
             "status": "online",
         }
-        with patch.object(ch_service, "get_device_by_agent_id", return_value=mock_device):
+        with patch.object(ch_service, "get_device_by_agent_id", return_value=mock_device), \
+             patch.object(ch_service, "get_agent_health", return_value=None):
             response = self.client.get("/api/v1/devices/agent-pc-01")
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.json()["agent_id"], "agent-pc-01")
