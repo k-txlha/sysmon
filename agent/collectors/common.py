@@ -1,28 +1,43 @@
+"""
+agent/collectors/common.py
+
+Cross-platform collector for universal system metrics and network identity:
+- CPU & RAM utilization statistics (psutil)
+- Host identity and network address resolution (socket, uuid)
+
+Process lifecycle collection has been moved to collectors/process.py (ProcessCollector)
+per the Process Lifecycle Event Architecture v2 guidelines.
+"""
+
+from __future__ import annotations
+
 import datetime
 import re
 import socket
 import uuid
-from typing import Any, Dict, List
+from typing import Any, Dict
+
 import psutil
 
 
 class SystemCollector:
     """
-    Cross-platform collector for universal system telemetry:
-    - CPU & Memory utilization (psutil)
-    - Running process inventory and resource statistics (psutil)
-    - Host identity and network address resolution (socket, uuid)
+    Cross-platform collector for general system telemetry:
+    - CPU & Memory utilization
+    - Host identity and network resolution
+
+    Process lifecycle tracking is handled by ProcessCollector (collectors/process.py).
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._bytes_to_gb = 1024 ** 3
 
     def get_system_metrics(self) -> Dict[str, Any]:
         """Collects CPU and RAM statistics."""
         vm = psutil.virtual_memory()
         return {
-            "timestamp": datetime.datetime.utcnow().isoformat(),
-            "cpu_usage": psutil.cpu_percent(interval=0.5),
+            "timestamp": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "cpu_usage": psutil.cpu_percent(interval=0.1),
             "memory_usage": vm.percent,
             "memory_info": {
                 "total_memory": f"{vm.total / self._bytes_to_gb:.2f} GB",
@@ -30,32 +45,6 @@ class SystemCollector:
                 "free_memory": f"{vm.free / self._bytes_to_gb:.2f} GB",
             },
         }
-
-    def get_processes(self, limit: int = 50) -> List[Dict[str, Any]]:
-        """Collects process metrics, sorted by highest CPU usage."""
-        processes = []
-        for proc in psutil.process_iter(["pid", "name", "cpu_percent", "memory_percent", "status"]):
-            try:
-                info = proc.info
-                cpu_val = info.get("cpu_percent") or 0.0
-                mem_val = info.get("memory_percent") or 0.0
-                processes.append({
-                    "pid": info.get("pid"),
-                    "name": info.get("name") or "unknown",
-                    "cpu_percent": f"{cpu_val:.1f}%",
-                    "memory_percent": f"{mem_val:.2f}%",
-                    "status": info.get("status", "unknown"),
-                    "_sort_key": cpu_val,
-                })
-            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-                continue
-
-        processes.sort(key=lambda p: p["_sort_key"], reverse=True)
-        # Strip internal sorting key before returning
-        for p in processes:
-            p.pop("_sort_key", None)
-
-        return processes[:limit] if limit else processes
 
     def get_network_metrics(self) -> Dict[str, str]:
         """Collects network identification metrics (hostname, IP, MAC)."""
@@ -77,14 +66,13 @@ class SystemCollector:
 
         return {
             "hostname": hostname,
-            "ip-address": ip_address,
-            "mac-address": mac_address,
+            "ip_address": ip_address,
+            "mac_address": mac_address,
         }
 
     def get_metrics(self) -> Dict[str, Any]:
         """Gathers all cross-platform metrics into a combined dictionary."""
         return {
             "system": self.get_system_metrics(),
-            "processes": self.get_processes(),
             "network": self.get_network_metrics(),
         }

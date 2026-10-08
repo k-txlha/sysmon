@@ -1,8 +1,11 @@
 import platform
-import sys
 import time
 
+# temp for testing
+import json
+
 from collectors.common import SystemCollector
+from collectors.process import ProcessCollector
 from utils.assembler import TelemetryAssembler
 from utils.config import settings
 from utils.logger import setup_logger
@@ -26,22 +29,27 @@ logger = setup_logger("main")
 class Agent:
     """
     Core EDR Telemetry Agent:
-    - Binds cross-platform and OS-specific telemetry collectors
+    - Binds cross-platform, OS-specific, and process lifecycle collectors
     - Assembles standardized EDR EventEnvelopes
     - Manages continuous collection, local disk buffering, and transmission loop
+
+    The ProcessCollector is instantiated ONCE and reused across all scan cycles
+    to maintain process state for lifecycle diffing (§11).
     """
 
     def __init__(self):
-        self.common_collector = SystemCollector()  # psutil (CPU, RAM, Processes, Network)
-        self.os_collector = OSCollector()          # OS-specific telemetry & logs
+        self.common_collector = SystemCollector()       # psutil (CPU, RAM, Network)
+        self.os_collector = OSCollector()                # OS-specific telemetry & logs
+        self.process_collector = ProcessCollector()      # Process lifecycle tracking (§11: single instance)
         self.assembler = TelemetryAssembler(
             common_collector=self.common_collector,
             os_collector=self.os_collector,
+            process_collector=self.process_collector,
         )
         self.buffer = get_buffer()
 
     def collect_envelopes(self):
-        """Assembles telemetry metrics, security logs, and health diagnostics into standard EventEnvelopes."""
+        """Assembles telemetry metrics, security logs, process lifecycle events, and health diagnostics into standard EventEnvelopes."""
         return self.assembler.assemble(
             queue_depth=self.buffer.get_depth(),
             dropped_events_total=self.buffer.get_dropped_count(),
