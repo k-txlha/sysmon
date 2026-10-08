@@ -81,8 +81,8 @@ async def start_worker():
                     device_row = (
                         agent_id,
                         str(network.get("hostname", "")),
-                        str(network.get("ip-address", "")),
-                        str(network.get("mac-address", "")),
+                        str(network.get("ip_address", "")),
+                        str(network.get("mac_address", "")),
                         str(system.get("memory_info", {}).get("total_memory", "Unknown")),
                         str(platform_info.get("operating_system", "")),
                         str(platform_info.get("operating_system_name", "")),
