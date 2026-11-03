@@ -44,10 +44,10 @@ def test_file_hasher_caching(tmp_path):
 
 
 def test_file_hasher_error_handling():
-    """Verify FileHasher returns status strings for inaccessible paths."""
+    """Verify FileHasher returns empty string for missing/inaccessible paths."""
     hasher = FileHasher()
     assert hasher.calculate_hash("") == ""
-    assert hasher.calculate_hash("C:\\non_existent_path_99999.exe") == "file_not_found"
+    assert hasher.calculate_hash("C:\\non_existent_path_99999.exe") == ""
 
 
 # ──────────────────────────────────────────────────────────────────────────────

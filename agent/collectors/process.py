@@ -119,7 +119,8 @@ class ProcessCollector:
             return None
 
     def _enumerate_all_processes(
-        self, filter_name: Optional[str] = None,
+        self,
+        filter_name: Optional[str] = None,
     ) -> Dict[ProcessIdentity, Dict[str, Any]]:
         """
         Enumerates ALL currently running processes.
@@ -170,7 +171,9 @@ class ProcessCollector:
         Limits are NOT applied before diffing.
         """
         current_processes = self._enumerate_all_processes(filter_name=filter_name)
-        now_iso = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        now_iso = datetime.datetime.now(datetime.timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
 
         # --- Initial snapshot or explicit resync ---
         if self._first_run or force_snapshot:
@@ -178,9 +181,7 @@ class ProcessCollector:
             snapshot_event: Dict[str, Any] = {
                 "event_type": "process.snapshot",
                 "data": {
-                    "processes": [
-                        self._strip_runtime_fields(p) for p in process_list
-                    ],
+                    "processes": [self._strip_runtime_fields(p) for p in process_list],
                 },
             }
             self._known_processes = current_processes
@@ -216,7 +217,9 @@ class ProcessCollector:
                 "event_type": "process.exit",
                 "data": {
                     "pid": prev_info.get("pid", identity[0]),
-                    "process_start_time": prev_info.get("process_start_time", identity[1]),
+                    "process_start_time": prev_info.get(
+                        "process_start_time", identity[1]
+                    ),
                     "observed_exit_time": now_iso,
                 },
             }

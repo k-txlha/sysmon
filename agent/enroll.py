@@ -20,6 +20,7 @@ import uuid
 import requests
 
 from utils.logger import setup_logger
+from utils.token_manager import persist_agent_configuration
 
 logger = setup_logger("agent_enroll")
 BASE_DIR = Path(__file__).resolve().parent
@@ -87,22 +88,11 @@ def enroll(
 
 def _save_to_env(backend_url: str, agent_token: str) -> None:
     """Updates or creates the local agent/.env file with provisioned credentials."""
-    env_vars = {}
-    if ENV_FILE.exists():
-        with open(ENV_FILE, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    k, v = line.split("=", 1)
-                    env_vars[k.strip()] = v.strip()
-
-    env_vars["SIEM_BACKEND_URL"] = backend_url
-    env_vars["SIEM_AGENT_TOKEN"] = agent_token
-
-    with open(ENV_FILE, "w", encoding="utf-8") as f:
-        f.write("# Sysmon Agent Configuration\n")
-        for k, v in env_vars.items():
-            f.write(f"{k}={v}\n")
+    persist_agent_configuration(
+        token_file=ENV_FILE,
+        agent_token=agent_token,
+        backend_url=backend_url,
+    )
 
     logger.info(f"Updated configuration saved to {ENV_FILE}")
 

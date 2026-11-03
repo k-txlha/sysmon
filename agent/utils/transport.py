@@ -8,8 +8,6 @@ and server acknowledgment to guarantee zero silent telemetry loss.
 
 from __future__ import annotations
 
-import random
-import time
 from typing import Any, Dict, List, Optional, Union
 
 import requests
@@ -17,6 +15,7 @@ import requests
 from utils.buffer import LocalBoundedBuffer
 from utils.config import settings
 from utils.logger import setup_logger
+from utils.token_manager import get_current_token
 
 logger = setup_logger("transport")
 
@@ -41,8 +40,9 @@ def _get_headers() -> Dict[str, str]:
         "Content-Type": "application/json",
         "User-Agent": "SysmonAgent/1.0",
     }
-    if settings.AGENT_TOKEN:
-        headers["X-Agent-Token"] = settings.AGENT_TOKEN
+    token = get_current_token()
+    if token:
+        headers["X-Agent-Token"] = token
     return headers
 
 

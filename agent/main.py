@@ -9,6 +9,7 @@ from collectors.process import ProcessCollector
 from utils.assembler import TelemetryAssembler
 from utils.config import settings
 from utils.logger import setup_logger
+from utils.token_manager import start_token_renewal, stop_token_renewal
 from utils.transport import get_buffer, ship_to_backend
 
 # 1. Detect Operating System
@@ -65,6 +66,7 @@ class Agent:
         )
         print("-" * 60)
 
+        start_token_renewal()
         try:
             while True:
                 envelopes = self.collect_envelopes()
@@ -77,6 +79,7 @@ class Agent:
         except KeyboardInterrupt:
             logger.info("Agent gracefully stopped by user interaction.")
         finally:
+            stop_token_renewal()
             self.buffer.close()
 
 
