@@ -143,6 +143,8 @@ class AgentService:
                 return None
 
             current_token = agent.get("current_token") or agent.get("agent_token")
+            if not isinstance(current_token, str):
+                return None
             if current_token != token_str:
                 replacement = token_data.get("superseded_by")
                 if replacement != current_token:
