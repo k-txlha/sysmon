@@ -11,7 +11,7 @@ REST API router for Agent Management:
 from __future__ import annotations
 
 from typing import Optional
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Header, HTTPException, status
 from pydantic import BaseModel, Field
 
 from services.agent_service import agent_service
@@ -90,6 +90,33 @@ async def enroll_agent(payload: AgentEnrollRequest):
         "tenant_id": enrollment["tenant_id"],
         "agent_token": enrollment["agent_token"],
         "enrolled_at": enrollment["enrolled_at"],
+        "expires_at": enrollment["expires_at"],
+    }
+
+
+@router.post("/renew", status_code=status.HTTP_200_OK)
+async def renew_agent_token(
+    x_agent_token: Optional[str] = Header(default=None, alias="X-Agent-Token"),
+):
+    """Validate and rotate the current credential for an enrolled agent."""
+    if not x_agent_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing agent authentication token header (X-Agent-Token).",
+        )
+
+    token_data = await agent_service.renew_token(x_agent_token)
+    if not token_data:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid, expired, revoked, or inactive agent token.",
+        )
+
+    return {
+        "agent_token": token_data["token"],
+        "agent_id": token_data["agent_id"],
+        "expires_at": token_data["expiration"],
+        "renewed": token_data.get("renewed", True),
     }
 
 

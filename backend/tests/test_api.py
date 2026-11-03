@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import sys
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -35,6 +36,7 @@ app = backend_main.app
 
 from fastapi.testclient import TestClient
 from services.ch_service import ch_service
+from services.agent_service import _IN_MEMORY_TOKENS
 
 
 class TestBackendAPI(unittest.TestCase):
@@ -356,6 +358,51 @@ class TestBackendAPI(unittest.TestCase):
             },
         )
         self.assertEqual(enroll_res.status_code, 401)
+
+    def test_agent_token_renewal_endpoint(self):
+        bootstrap = self.client.post(
+            "/api/v1/agents/token", json={"description": "Renewal endpoint test"}
+        ).json()["token"]
+        enrollment = self.client.post(
+            "/api/v1/agents/enroll",
+            json={
+                "bootstrap_token": bootstrap,
+                "hostname": "renewal-endpoint-test",
+                "operating_system": "Linux",
+                "mac_address": "00:11:22:33:44:77",
+            },
+        )
+        self.assertEqual(enrollment.status_code, 200)
+        old_token = enrollment.json()["agent_token"]
+
+        not_due = self.client.post(
+            "/api/v1/agents/renew",
+            headers={"X-Agent-Token": old_token},
+        )
+        self.assertEqual(not_due.status_code, 200)
+        self.assertFalse(not_due.json()["renewed"])
+        self.assertEqual(not_due.json()["agent_token"], old_token)
+
+        _IN_MEMORY_TOKENS[old_token]["expiration"] = (
+            datetime.now(timezone.utc) + timedelta(minutes=1)
+        ).isoformat()
+        renewed = self.client.post(
+            "/api/v1/agents/renew",
+            headers={"X-Agent-Token": old_token},
+        )
+        self.assertEqual(renewed.status_code, 200)
+        self.assertTrue(renewed.json()["renewed"])
+        self.assertEqual(renewed.json()["agent_id"], "renewal-endpoint-test")
+        self.assertNotEqual(renewed.json()["agent_token"], old_token)
+
+        replacement = renewed.json()["agent_token"]
+        revoked = self.client.delete(f"/api/v1/agents/tokens/{replacement}")
+        self.assertEqual(revoked.status_code, 200)
+        rejected = self.client.post(
+            "/api/v1/agents/renew",
+            headers={"X-Agent-Token": replacement},
+        )
+        self.assertEqual(rejected.status_code, 403)
 
     def test_device_health_endpoint(self):
         mock_health = {
