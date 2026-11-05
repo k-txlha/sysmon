@@ -23,6 +23,9 @@ pnpm-debug.log*
 # Logs & Runtime
 *.log
 logs/
+data/sysmon_auth.db
+data/sysmon_auth.db-shm
+data/sysmon_auth.db-wal
 
 # IDE & OS Artifacts
 .vscode/
