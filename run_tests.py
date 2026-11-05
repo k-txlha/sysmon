@@ -7,20 +7,23 @@ Runs agent, backend, and worker test suites in isolated environments.
 
 import subprocess
 import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent
 
 
 def run_suite(name: str, test_dir: str, pythonpath: str) -> bool:
     print(f"\n{'='*60}\n Running {name} Test Suite ({test_dir})\n{'='*60}")
     cmd = [sys.executable, "-m", "pytest", test_dir, "-o", f"pythonpath={pythonpath}", "-v"]
-    result = subprocess.run(cmd)
+    result = subprocess.run(cmd, cwd=REPO_ROOT)
     return result.returncode == 0
 
 
 def main():
     suites = [
-        ("Agent", "agent/tests", "agent"),
-        ("Backend", "backend/tests", "backend"),
-        ("Worker", "worker/tests", "worker"),
+        ("Agent", "agent/tests", "."),
+        ("Backend", "backend/tests", "."),
+        ("Worker", "worker/tests", "."),
     ]
 
     all_passed = True
