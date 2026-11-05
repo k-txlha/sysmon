@@ -85,10 +85,10 @@ export default function Settings() {
     }
   };
 
-  const handleRevokeToken = async (tokenString) => {
-    if (!window.confirm('Are you sure you want to revoke this enrollment token?')) return;
+  const handleRevokeToken = async (credentialId) => {
+    if (!window.confirm('Are you sure you want to revoke this agent credential or enrollment token?')) return;
     try {
-      await revokeAgentToken(tokenString);
+      await revokeAgentToken(credentialId);
       fetchTokenData();
     } catch (err) {
       console.error('Failed to revoke token:', err);
@@ -228,7 +228,7 @@ export default function Settings() {
           <div className="card-header">
             <div className="flex-align gap-2">
               <Key size={18} className="text-accent-blue" />
-              <h2 className="card-title">Agent Enrollment Tokens</h2>
+              <h2 className="card-title">Agent Credentials & Enrollment Tokens</h2>
             </div>
           </div>
           <div className="card-content">
@@ -293,7 +293,7 @@ export default function Settings() {
                   <table className="data-table">
                     <thead>
                       <tr>
-                        <th>Token</th>
+                        <th>Credential record</th>
                         <th>Description</th>
                         <th>Created</th>
                         <th style={{ width: '80px' }}>Action</th>
@@ -320,7 +320,7 @@ export default function Settings() {
                                 type="button"
                                 className="btn-icon danger sm"
                                 onClick={() => handleRevokeToken(tokenId)}
-                                title="Revoke Token"
+                                title="Revoke Credential"
                               >
                                 <Trash2 size={14} />
                               </button>
