@@ -19,8 +19,8 @@ import json
 import requests
 from typing import Optional
 
-from detection.models import FiredAlert, Severity
-from utils.logger import setup_logger
+from worker.detection.models import FiredAlert, Severity
+from worker.utils.logger import setup_logger
 
 logger = setup_logger("alerting.slack")
 

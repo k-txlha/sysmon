@@ -1,7 +1,7 @@
 import json
 import clickhouse_connect
-from utils.config import settings
-from utils.logger import setup_logger
+from worker.utils.config import settings
+from worker.utils.logger import setup_logger
 
 logger = setup_logger("clickhouse_service")
 

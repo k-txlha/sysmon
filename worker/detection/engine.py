@@ -29,8 +29,8 @@ import datetime
 from collections import defaultdict, deque
 from typing import Any, Dict, List, Optional
 
-from .loader import load_rules
-from .models import (
+from worker.detection.loader import load_rules
+from worker.detection.models import (
     ConditionType,
     DetectionRule,
     FiredAlert,
@@ -39,7 +39,7 @@ from .models import (
     ThresholdCondition,
     TimeWindowCondition,
 )
-from utils.logger import setup_logger
+from worker.utils.logger import setup_logger
 
 logger = setup_logger("detection_engine")
 

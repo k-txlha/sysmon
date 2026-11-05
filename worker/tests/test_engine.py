@@ -11,18 +11,11 @@ Run from the `worker/` directory:
     pytest tests/test_engine.py -v
 """
 
-import sys
 import datetime
 import pytest
-from pathlib import Path
 
-# ── Path setup so `detection` and `utils` imports resolve ───────────────────
-# Tests live in worker/tests/, imports need worker/ on sys.path.
-WORKER_DIR = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(WORKER_DIR))
-
-from detection.engine import DetectionEngine
-from detection.models import ConditionType, FiredAlert, Severity
+from worker.detection.engine import DetectionEngine
+from worker.detection.models import ConditionType, FiredAlert, Severity
 
 
 # ---------------------------------------------------------------------------
@@ -54,7 +47,7 @@ def _engine_with_rules(rules_yaml: list[dict]) -> DetectionEngine:
     Build a DetectionEngine pre-loaded with the given rule dicts,
     bypassing the YAML file loader entirely.
     """
-    from detection.models import DetectionRule
+    from worker.detection.models import DetectionRule
 
     engine = DetectionEngine.__new__(DetectionEngine)
     engine.rules = [DetectionRule(**r) for r in rules_yaml]
@@ -342,7 +335,7 @@ class TestEngineEdgeCases:
         Verify that disabled rules are skipped by the loader.
         This tests the loader rather than the engine, but is a critical integration check.
         """
-        from detection.models import DetectionRule
+        from worker.detection.models import DetectionRule
         rule = DetectionRule(
             name="disabled_rule",
             description="Should never fire",

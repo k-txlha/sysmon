@@ -3,13 +3,13 @@ import json
 import datetime
 from collections import defaultdict
 from aiokafka import AIOKafkaConsumer
-from db.ch_client import ClickHouseService
-from utils.config import settings
-from utils.logger import setup_logger
+from worker.db.ch_client import ClickHouseService
+from worker.utils.config import settings
+from worker.utils.logger import setup_logger
 
 # ── Detection Engine & Alerting ─────────────────────────────────────────────
-from detection import DetectionEngine
-from alerting import AlertDispatcher
+from worker.detection import DetectionEngine
+from worker.alerting import AlertDispatcher
 
 logger = setup_logger("worker_main")
 

@@ -18,8 +18,8 @@ from typing import List
 import yaml
 from pydantic import ValidationError
 
-from .models import DetectionRule
-from utils.logger import setup_logger
+from worker.detection.models import DetectionRule
+from worker.utils.logger import setup_logger
 
 logger = setup_logger("rule_loader")
 

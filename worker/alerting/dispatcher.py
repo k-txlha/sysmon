@@ -19,9 +19,9 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from detection.models import FiredAlert
-from utils.config import settings
-from utils.logger import setup_logger
+from worker.detection.models import FiredAlert
+from worker.utils.config import settings
+from worker.utils.logger import setup_logger
 
 logger = setup_logger("alerting.dispatcher")
 
@@ -86,7 +86,7 @@ class AlertDispatcher:
         # ── Slack ──────────────────────────────────────────────────────
         if self._slack_url:
             try:
-                from alerting.slack import send_slack_alert
+                from worker.alerting.slack import send_slack_alert
                 send_slack_alert(alert, self._slack_url, self._dashboard_url)
             except Exception as exc:
                 logger.error(f"Slack dispatch failed for '{alert.rule_name}': {exc}")
@@ -94,7 +94,7 @@ class AlertDispatcher:
         # ── Discord ────────────────────────────────────────────────────
         if self._discord_url:
             try:
-                from alerting.discord import send_discord_alert
+                from worker.alerting.discord import send_discord_alert
                 send_discord_alert(alert, self._discord_url, self._dashboard_url)
             except Exception as exc:
                 logger.error(f"Discord dispatch failed for '{alert.rule_name}': {exc}")
@@ -102,7 +102,7 @@ class AlertDispatcher:
         # ── Email ──────────────────────────────────────────────────────
         if self._smtp_host and self._smtp_user and self._smtp_to:
             try:
-                from alerting.email import send_email_alert
+                from worker.alerting.email import send_email_alert
                 send_email_alert(
                     alert=alert,
                     smtp_host=self._smtp_host,
