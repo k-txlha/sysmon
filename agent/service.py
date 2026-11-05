@@ -15,12 +15,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-from utils.logger import setup_logger
+from agent.utils.logger import setup_logger
 
 logger = setup_logger("agent_service_mgr")
 
 BASE_DIR = Path(__file__).resolve().parent
-MAIN_SCRIPT = BASE_DIR / "main.py"
+REPO_ROOT = BASE_DIR.parent
 PYTHON_EXE = sys.executable
 SERVICE_NAME = "sysmon-agent"
 SERVICE_DISPLAY_NAME = "Sysmon EDR Telemetry Agent"
@@ -38,8 +38,8 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=root
-WorkingDirectory={BASE_DIR}
-ExecStart={PYTHON_EXE} {MAIN_SCRIPT}
+WorkingDirectory={REPO_ROOT}
+ExecStart={PYTHON_EXE} -m agent.main
 Restart=always
 RestartSec=10
 KillMode=process
@@ -148,7 +148,8 @@ class WindowsServiceManager:
                 "/F",
                 "/SC", "ONSTART",
                 "/TN", SERVICE_NAME,
-                "/TR", f'"{PYTHON_EXE}" "{MAIN_SCRIPT}"',
+                "/TR",
+                f'cmd.exe /c "cd /d ""{REPO_ROOT}"" && ""{PYTHON_EXE}"" -m agent.main"',
                 "/RL", "HIGHEST",
                 "/RU", "SYSTEM",
             ]

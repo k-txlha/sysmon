@@ -6,7 +6,7 @@ import os
 import tempfile
 import pytest
 
-from utils.buffer import LocalBoundedBuffer
+from agent.utils.buffer import LocalBoundedBuffer
 
 
 @pytest.fixture

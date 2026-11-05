@@ -27,7 +27,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import psutil
 
-from utils.hash import FileHasher
+from agent.utils.hash import FileHasher
 
 logger = logging.getLogger("process_collector")
 

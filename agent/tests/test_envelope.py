@@ -6,7 +6,7 @@ import datetime
 import pytest
 from pydantic import ValidationError
 
-from models.envelope import EventEnvelope, SeverityLevel, AgentHealthTelemetry
+from agent.models.envelope import EventEnvelope, SeverityLevel, AgentHealthTelemetry
 
 
 def test_valid_event_envelope_creation():

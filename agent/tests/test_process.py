@@ -20,8 +20,8 @@ Validates:
 from unittest.mock import MagicMock, patch
 import pytest
 
-from collectors.process import ProcessCollector
-from utils.hash import FileHasher
+from agent.collectors.process import ProcessCollector
+from agent.utils.hash import FileHasher
 
 
 # ──────────────────────────────────────────────────────────────────────────────

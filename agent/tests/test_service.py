@@ -6,7 +6,7 @@ from unittest.mock import patch, MagicMock
 from pathlib import Path
 import pytest
 
-from service import (
+from agent.service import (
     LinuxServiceManager,
     WindowsServiceManager,
     get_service_manager,

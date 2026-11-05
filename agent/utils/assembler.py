@@ -23,11 +23,11 @@ from typing import Any, Dict, List, Optional
 
 import psutil
 
-from collectors.base import BaseOSCollector
-from collectors.common import SystemCollector
-from collectors.process import ProcessCollector
-from models.envelope import EventEnvelope, SeverityLevel, AgentHealthTelemetry
-from utils.logger import setup_logger
+from agent.collectors.base import BaseOSCollector
+from agent.collectors.common import SystemCollector
+from agent.collectors.process import ProcessCollector
+from agent.models.envelope import EventEnvelope, SeverityLevel, AgentHealthTelemetry
+from agent.utils.logger import setup_logger
 
 logger = setup_logger("assembler")
 
@@ -234,11 +234,11 @@ def assemble_telemetry_payload(
             common_collector = SystemCollector()
         if os_collector is None:
             if os_type == "windows":
-                from collectors.windows import OSCollector
+                from agent.collectors.windows import OSCollector
             elif os_type == "linux":
-                from collectors.linux import OSCollector
+                from agent.collectors.linux import OSCollector
             elif os_type == "darwin":
-                from collectors.darwin import OSCollector
+                from agent.collectors.darwin import OSCollector
             else:
                 raise NotImplementedError(f"Unsupported OS: {os_type}")
             os_collector = OSCollector()

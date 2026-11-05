@@ -4,23 +4,23 @@ import time
 # temp for testing
 import json
 
-from collectors.common import SystemCollector
-from collectors.process import ProcessCollector
-from utils.assembler import TelemetryAssembler
-from utils.config import settings
-from utils.logger import setup_logger
-from utils.token_manager import start_token_renewal, stop_token_renewal
-from utils.transport import get_buffer, ship_to_backend
+from agent.collectors.common import SystemCollector
+from agent.collectors.process import ProcessCollector
+from agent.utils.assembler import TelemetryAssembler
+from agent.utils.config import settings
+from agent.utils.logger import setup_logger
+from agent.utils.token_manager import start_token_renewal, stop_token_renewal
+from agent.utils.transport import get_buffer, ship_to_backend
 
 # 1. Detect Operating System
 OS_TYPE = platform.system().lower()  # returns 'linux', 'windows', or 'darwin'
 
 if OS_TYPE == "windows":
-    from collectors.windows import OSCollector
+    from agent.collectors.windows import OSCollector
 elif OS_TYPE == "linux":
-    from collectors.linux import OSCollector
+    from agent.collectors.linux import OSCollector
 elif OS_TYPE == "darwin":
-    from collectors.darwin import OSCollector
+    from agent.collectors.darwin import OSCollector
 else:
     raise NotImplementedError(f"Unsupported OS: {OS_TYPE}")
 

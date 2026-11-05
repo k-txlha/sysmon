@@ -15,7 +15,7 @@ import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
-from utils.logger import setup_logger
+from agent.utils.logger import setup_logger
 
 logger = setup_logger("agent_buffer")
 

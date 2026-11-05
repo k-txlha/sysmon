@@ -19,8 +19,8 @@ import uuid
 
 import requests
 
-from utils.logger import setup_logger
-from utils.token_manager import persist_agent_configuration
+from agent.utils.logger import setup_logger
+from agent.utils.token_manager import persist_agent_configuration
 
 logger = setup_logger("agent_enroll")
 BASE_DIR = Path(__file__).resolve().parent

@@ -2,8 +2,8 @@ import datetime
 import platform
 import subprocess
 from typing import Any, Dict, List
-from collectors.base import BaseOSCollector
-from utils.logger import setup_logger
+from agent.collectors.base import BaseOSCollector
+from agent.utils.logger import setup_logger
 
 logger = setup_logger("collector_darwin")
 

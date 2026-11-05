@@ -7,7 +7,7 @@ from pathlib import Path
 import tempfile
 import pytest
 
-from enroll import enroll, _save_to_env, _get_mac_address
+from agent.enroll import enroll, _save_to_env, _get_mac_address
 
 
 def test_get_mac_address():
@@ -27,7 +27,7 @@ def test_enroll_success():
         "enrolled_at": "2026-10-02T12:00:00Z",
     }
 
-    with patch("requests.post", return_value=mock_resp), patch("enroll._save_to_env") as mock_save:
+    with patch("requests.post", return_value=mock_resp), patch("agent.enroll._save_to_env") as mock_save:
         res = enroll(
             bootstrap_token="sysmon_tok_bootstrap_valid",
             backend_url="http://mock-backend:8000",
@@ -57,7 +57,7 @@ def test_enroll_invalid_token():
 def test_save_to_env():
     with tempfile.TemporaryDirectory() as tmpdir:
         temp_env_file = Path(tmpdir) / ".env"
-        with patch("enroll.ENV_FILE", temp_env_file):
+        with patch("agent.enroll.ENV_FILE", temp_env_file):
             _save_to_env("http://backend:8000/api/v1/telemetry", "tok_xyz")
 
             content = temp_env_file.read_text()

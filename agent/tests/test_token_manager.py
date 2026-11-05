@@ -4,8 +4,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from utils import token_manager
-from utils.token_manager import AgentTokenManager
+from agent.utils import token_manager
+from agent.utils.token_manager import AgentTokenManager
 
 
 def _renewal_response(agent_token: str) -> MagicMock:
@@ -29,7 +29,7 @@ def test_renewal_persists_replacement_before_switching_token(tmp_path: Path, mon
     monkeypatch.setattr(token_manager.settings, "AGENT_TOKEN", "old-token")
     response = _renewal_response("new-token")
 
-    with patch("utils.token_manager.requests.post", return_value=response) as post:
+    with patch("agent.utils.token_manager.requests.post", return_value=response) as post:
         delay = manager._renew_once()
 
     assert manager.current_token == "new-token"
@@ -58,7 +58,7 @@ def test_persistence_failure_keeps_current_token(tmp_path: Path, monkeypatch):
         MagicMock(side_effect=OSError("disk unavailable")),
     )
 
-    with patch("utils.token_manager.requests.post", return_value=response):
+    with patch("agent.utils.token_manager.requests.post", return_value=response):
         with pytest.raises(OSError, match="disk unavailable"):
             manager._renew_once()
 

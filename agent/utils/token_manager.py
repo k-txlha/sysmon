@@ -13,8 +13,8 @@ from urllib.parse import urlsplit, urlunsplit
 
 import requests
 
-from utils.config import ENV_FILE_PATH, settings
-from utils.logger import setup_logger
+from agent.utils.config import ENV_FILE_PATH, settings
+from agent.utils.logger import setup_logger
 
 logger = setup_logger("token_manager")
 RENEWAL_MARGIN = timedelta(minutes=5)

@@ -12,10 +12,10 @@ from typing import Any, Dict, List, Optional, Union
 
 import requests
 
-from utils.buffer import LocalBoundedBuffer
-from utils.config import settings
-from utils.logger import setup_logger
-from utils.token_manager import get_current_token
+from agent.utils.buffer import LocalBoundedBuffer
+from agent.utils.config import settings
+from agent.utils.logger import setup_logger
+from agent.utils.token_manager import get_current_token
 
 logger = setup_logger("transport")
 

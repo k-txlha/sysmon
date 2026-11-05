@@ -10,8 +10,8 @@ Process Lifecycle Event Architecture v2:
 """
 
 from unittest.mock import MagicMock, patch
-from collectors.process import ProcessCollector
-from utils.assembler import TelemetryAssembler
+from agent.collectors.process import ProcessCollector
+from agent.utils.assembler import TelemetryAssembler
 
 
 def test_assembler_packages_envelopes():
