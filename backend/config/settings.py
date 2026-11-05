@@ -24,6 +24,7 @@ class BackendSettings:
                 str(BASE_DIR.parent / "data" / "sysmon_auth.db"),
             )
         ).expanduser()
+        self.DEFAULT_TENANT_ID = os.getenv("DEFAULT_TENANT_ID", "default")
         self.AUTH_SESSION_COOKIE_SECURE = (
             os.getenv("AUTH_SESSION_COOKIE_SECURE", "").lower() in ("true", "1", "yes")
             if os.getenv("AUTH_SESSION_COOKIE_SECURE") is not None
@@ -31,8 +32,22 @@ class BackendSettings:
         )
         self.TLS_CERT_FILE = os.getenv("TLS_CERT_FILE")
         self.TLS_KEY_FILE = os.getenv("TLS_KEY_FILE")
+        self.TLS_TERMINATED = os.getenv("TLS_TERMINATED", "false").lower() in (
+            "true",
+            "1",
+            "yes",
+        )
         if bool(self.TLS_CERT_FILE) != bool(self.TLS_KEY_FILE):
             raise ValueError("TLS_CERT_FILE and TLS_KEY_FILE must be configured together.")
+        if (
+            self.ENVIRONMENT == "production"
+            and not self.TLS_CERT_FILE
+            and not self.TLS_TERMINATED
+        ):
+            raise ValueError(
+                "Production deployments must configure TLS_CERT_FILE/TLS_KEY_FILE "
+                "or set TLS_TERMINATED=true behind a TLS-terminating proxy."
+            )
         if self.ENVIRONMENT == "production" and not self.AUTH_SESSION_COOKIE_SECURE:
             raise ValueError("Production deployments must enable secure administrator cookies.")
         self.KAFKA_BOOTSTRAP_SERVERS = os.getenv(

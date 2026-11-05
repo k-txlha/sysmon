@@ -20,6 +20,7 @@ from backend.services.agent_service import agent_service
 from backend.services.producer import kafka_service
 from backend.utils.logger import setup_logger
 from backend.utils.rate_limiter import RateLimiter
+from backend.utils.request_security import uses_secure_agent_transport
 
 router = APIRouter(prefix="/api/v1", tags=["Ingestion"])
 logger = setup_logger("transport")
@@ -29,28 +30,45 @@ rate_limiter = RateLimiter(requests_limit=10, window_seconds=10)
 
 
 async def verify_agent_auth(
+    request: Request,
     x_agent_token: Optional[str] = Header(default=None, alias="X-Agent-Token"),
     authorization: Optional[str] = Header(default=None),
-) -> str:
+) -> Dict[str, str]:
     """Validates the agent token and returns its backend-bound identity."""
-
-    token = x_agent_token
-    if not token and authorization and authorization.startswith("Bearer "):
-        token = authorization.split("Bearer ", 1)[1].strip()
+    if not uses_secure_agent_transport(request):
+        raise HTTPException(
+            status_code=status.HTTP_426_UPGRADE_REQUIRED,
+            detail="Agent telemetry requires HTTPS.",
+        )
+    bearer_token = None
+    if authorization:
+        scheme, separator, value = authorization.partition(" ")
+        if scheme.lower() != "bearer" or not separator or not value.strip():
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Malformed agent Authorization header.",
+            )
+        bearer_token = value.strip()
+    if x_agent_token and bearer_token and x_agent_token != bearer_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Conflicting agent credentials.",
+        )
+    token = bearer_token or x_agent_token
 
     if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing agent authentication token header (X-Agent-Token or Authorization).",
+            detail="Missing agent authentication credential.",
         )
 
-    agent_id = await agent_service.get_authenticated_agent_id(token)
-    if not agent_id:
+    identity = await agent_service.get_authenticated_agent_identity(token)
+    if not identity:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or revoked agent token.",
+            detail="Invalid, expired, or revoked agent credential.",
         )
-    return agent_id
+    return identity
 
 
 @router.post(
@@ -60,7 +78,7 @@ async def verify_agent_auth(
 )
 async def receive_telemetry(
     payload: Union[IngestionBatchRequest, EventEnvelope, List[EventEnvelope], Dict[str, Any]],
-    authenticated_agent_id: str = Depends(verify_agent_auth),
+    authenticated_identity: Dict[str, str] = Depends(verify_agent_auth),
 ):
     """
     Ingests standardized EDR EventEnvelope payloads.
@@ -110,7 +128,18 @@ async def receive_telemetry(
     unique_agents = set()
     raw_envelopes = []
     for env in envelopes:
-        env.agent_id = authenticated_agent_id
+        if env.agent_id != authenticated_identity["agent_id"]:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Telemetry agent_id does not match the authenticated identity.",
+            )
+        if env.tenant_id != authenticated_identity["tenant_id"]:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Telemetry tenant_id does not match the authenticated tenant.",
+            )
+        env.agent_id = authenticated_identity["agent_id"]
+        env.tenant_id = authenticated_identity["tenant_id"]
         env.received_at = received_at_ts
         unique_agents.add(env.agent_id)
         raw_envelopes.append(env.model_dump(mode="json"))

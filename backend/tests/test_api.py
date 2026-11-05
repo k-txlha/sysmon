@@ -14,6 +14,8 @@ Unit and integration tests for Sysmon Backend REST API endpoints (Phase 2):
 from __future__ import annotations
 
 import tempfile
+import sqlite3
+from contextlib import closing
 import unittest
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -23,7 +25,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from backend import main as backend_main
-from backend.services.agent_service import AgentService, _IN_MEMORY_TOKENS
+from backend.services.agent_service import AgentService, agent_service
 from backend.services.auth_service import auth_service
 from backend.services.ch_service import ch_service
 
@@ -63,6 +65,14 @@ class TestBackendAPI(unittest.TestCase):
         )
         self.assertEqual(enrollment.status_code, 200, enrollment.text)
         return enrollment.json()["agent_token"]
+
+    def set_token_expiration(self, token: str, expiration: datetime) -> None:
+        with closing(sqlite3.connect(auth_service.database_path)) as connection:
+            connection.execute(
+                "UPDATE agent_credentials SET expires_at = ? WHERE token_hash = ?",
+                (expiration.isoformat(), AgentService._token_key(token)),
+            )
+            connection.commit()
 
     # -----------------------------------------------------------------------
     # 1. Health & Root Endpoints
@@ -335,9 +345,13 @@ class TestBackendAPI(unittest.TestCase):
         token_str = token_data["token"]
         self.assertTrue(token_str.startswith("sysmon_tok_"))
         token_key = AgentService._token_key(token_str)
-        self.assertIn(token_key, _IN_MEMORY_TOKENS)
-        self.assertNotIn(token_str, _IN_MEMORY_TOKENS)
-        self.assertNotIn("token", _IN_MEMORY_TOKENS[token_key])
+        with closing(sqlite3.connect(auth_service.database_path)) as connection:
+            stored_hash = connection.execute(
+                "SELECT token_hash FROM agent_credentials WHERE id = ?",
+                (token_data["token_id"],),
+            ).fetchone()[0]
+        self.assertEqual(stored_hash, token_key)
+        self.assertNotEqual(stored_hash, token_str)
 
         # List tokens
         list_res = self.client.get("/api/v1/agents/tokens")
@@ -345,13 +359,13 @@ class TestBackendAPI(unittest.TestCase):
         token_entries = list_res.json()["items"]
         self.assertTrue(token_entries)
         self.assertNotIn("token", token_entries[0])
-        token_ids = [t["token_id"] for t in token_entries]
-        self.assertIn(AgentService._token_key(token_str), token_ids)
+        self.assertNotIn("token_hash", token_entries[0])
+        self.assertNotIn("agent_token", token_entries[0])
+        token_ids = [t["id"] for t in token_entries]
+        self.assertIn(token_data["token_id"], token_ids)
 
         # Revoke token
-        del_res = self.client.delete(
-            f"/api/v1/agents/tokens/{AgentService._token_key(token_str)}"
-        )
+        del_res = self.client.delete(f"/api/v1/agents/tokens/{token_data['token_id']}")
         self.assertEqual(del_res.status_code, 200)
         self.assertEqual(del_res.json()["status"], "success")
 
@@ -370,13 +384,26 @@ class TestBackendAPI(unittest.TestCase):
                 "operating_system": "Windows 11 Pro",
                 "mac_address": "00:11:22:33:44:55",
                 "machine_architecture": "AMD64",
+                "tenant_id": "tenant_spoofed_by_agent",
             },
         )
         self.assertEqual(enroll_res.status_code, 200)
         data = enroll_res.json()
         self.assertEqual(data["status"], "enrolled")
-        self.assertEqual(data["agent_id"], hostname)
+        self.assertNotEqual(data["agent_id"], hostname)
+        self.assertTrue(data["agent_id"].startswith("agent_"))
+        self.assertEqual(data["tenant_id"], "default")
         self.assertTrue(data["agent_token"].startswith("sysmon_agent_"))
+        reused = self.client.post(
+            "/api/v1/agents/enroll",
+            json={
+                "bootstrap_token": bootstrap_tok,
+                "hostname": hostname,
+                "operating_system": "Windows 11 Pro",
+                "mac_address": "00:11:22:33:44:55",
+            },
+        )
+        self.assertEqual(reused.status_code, 401)
 
     def test_agent_enroll_handshake_invalid_token(self):
         enroll_res = self.client.post(
@@ -389,6 +416,48 @@ class TestBackendAPI(unittest.TestCase):
             },
         )
         self.assertEqual(enroll_res.status_code, 401)
+
+    def test_agent_enrollment_rejects_remote_plain_http(self):
+        remote_client = TestClient(app, client=("192.0.2.10", 54322))
+        try:
+            response = remote_client.post(
+                "/api/v1/agents/enroll",
+                json={
+                    "bootstrap_token": "not-a-valid-token",
+                    "hostname": "remote-test-host",
+                    "operating_system": "Linux",
+                    "mac_address": "00:00:00:00:00:00",
+                },
+            )
+        finally:
+            remote_client.close()
+        self.assertEqual(response.status_code, 426)
+
+    def test_agent_renewal_and_telemetry_reject_remote_plain_http(self):
+        agent_token = self.create_agent_credential()
+        remote_client = TestClient(app, client=("192.0.2.11", 54323))
+        try:
+            renewal = remote_client.post(
+                "/api/v1/agents/renew",
+                headers={"Authorization": "Bearer " + agent_token},
+            )
+            telemetry = remote_client.post(
+                "/api/v1/telemetry",
+                json={
+                    "host_id": "TEST-HOST",
+                    "agent_id": "any-agent",
+                    "tenant_id": "default",
+                    "event_type": "telemetry.snapshot",
+                    "observed_at": "2026-09-16T14:30:00.000Z",
+                    "source": "windows_agent",
+                    "data": {},
+                },
+                headers={"Authorization": "Bearer " + agent_token},
+            )
+        finally:
+            remote_client.close()
+        self.assertEqual(renewal.status_code, 426)
+        self.assertEqual(telemetry.status_code, 426)
 
     def test_agent_token_renewal_endpoint(self):
         hostname = f"renewal-endpoint-{uuid.uuid4().hex[:8]}"
@@ -415,26 +484,72 @@ class TestBackendAPI(unittest.TestCase):
         self.assertFalse(not_due.json()["renewed"])
         self.assertEqual(not_due.json()["agent_token"], old_token)
 
-        _IN_MEMORY_TOKENS[AgentService._token_key(old_token)]["expiration"] = (
-            datetime.now(timezone.utc) + timedelta(minutes=1)
-        ).isoformat()
+        self.set_token_expiration(
+            old_token, datetime.now(timezone.utc) + timedelta(minutes=1)
+        )
         renewed = self.client.post(
             "/api/v1/agents/renew",
             headers={"X-Agent-Token": old_token},
         )
         self.assertEqual(renewed.status_code, 200)
         self.assertTrue(renewed.json()["renewed"])
-        self.assertEqual(renewed.json()["agent_id"], hostname)
+        self.assertEqual(
+            renewed.json()["agent_id"],
+            agent_service._load_token(old_token)["agent_id"],
+        )
         self.assertNotEqual(renewed.json()["agent_token"], old_token)
 
         replacement = renewed.json()["agent_token"]
-        revoked = self.client.delete(f"/api/v1/agents/tokens/{replacement}")
+        credential_ids = {
+            entry["agent_id"]: entry["id"]
+            for entry in self.client.get("/api/v1/agents/tokens").json()["items"]
+            if entry["agent_id"] == enrollment.json()["agent_id"]
+            and entry["token_type"] == "agent"
+        }
+        revoked = self.client.delete(
+            f"/api/v1/agents/tokens/{credential_ids[enrollment.json()['agent_id']]}"
+        )
         self.assertEqual(revoked.status_code, 200)
         rejected = self.client.post(
             "/api/v1/agents/renew",
             headers={"X-Agent-Token": replacement},
         )
         self.assertEqual(rejected.status_code, 403)
+        telemetry_rejected = self.client.post(
+            "/api/v1/telemetry",
+            json={
+                "host_id": "TEST-HOST",
+                "agent_id": enrollment.json()["agent_id"],
+                "tenant_id": "default",
+                "event_type": "telemetry.snapshot",
+                "observed_at": "2026-09-16T14:30:00.000Z",
+                "source": "windows_agent",
+                "data": {},
+            },
+            headers={"Authorization": "Bearer " + replacement},
+        )
+        self.assertEqual(telemetry_rejected.status_code, 401)
+
+    def test_expired_agent_credential_is_rejected(self):
+        agent_token = self.create_agent_credential()
+        identity = agent_service._load_token(agent_token)
+        self.set_token_expiration(
+            agent_token, datetime.now(timezone.utc) - timedelta(seconds=1)
+        )
+        response = self.client.post(
+            "/api/v1/telemetry",
+            json={
+                "host_id": "TEST-HOST",
+                "agent_id": identity["agent_id"],
+                "tenant_id": identity["tenant_id"],
+                "event_type": "telemetry.snapshot",
+                "observed_at": "2026-09-16T14:30:00.000Z",
+                "source": "windows_agent",
+                "data": {},
+            },
+            headers={"Authorization": "Bearer " + agent_token},
+        )
+        self.assertEqual(response.status_code, 401)
 
     def test_device_health_endpoint(self):
         mock_health = {
@@ -465,7 +580,7 @@ class TestBackendAPI(unittest.TestCase):
             "schema_version": 1,
             "tenant_id": "default",
             "host_id": "TEST-HOST",
-            "agent_id": "spoofed-agent-id",
+            "agent_id": agent_service._load_token(agent_token)["agent_id"],
             "event_type": "telemetry.snapshot",
             "observed_at": "2026-09-16T14:30:00.000Z",
             "sequence": 1,
@@ -477,7 +592,7 @@ class TestBackendAPI(unittest.TestCase):
             response = self.client.post(
                 "/api/v1/telemetry",
                 json=payload,
-                headers={"X-Agent-Token": agent_token},
+                headers={"Authorization": "Bearer " + agent_token},
             )
             self.assertEqual(response.status_code, 202)
             data = response.json()
@@ -485,7 +600,8 @@ class TestBackendAPI(unittest.TestCase):
             self.assertEqual(data["ingested_count"], 1)
             self.assertIn("received_at", data)
             self.assertEqual(
-                stream.call_args.args[1][0]["agent_id"], agent_id
+                stream.call_args.args[1][0]["agent_id"],
+                agent_service._load_token(agent_token)["agent_id"],
             )
 
     def test_telemetry_batch_envelope_ingestion_success(self):
@@ -497,7 +613,7 @@ class TestBackendAPI(unittest.TestCase):
                     "event_id": "11111111-2222-3333-4444-555555555551",
                     "schema_version": 1,
                     "host_id": "TEST-HOST",
-                    "agent_id": "spoofed-agent-one",
+                    "agent_id": agent_service._load_token(agent_token)["agent_id"],
                     "event_type": "telemetry.snapshot",
                     "observed_at": "2026-09-16T14:30:00.000Z",
                     "sequence": 1,
@@ -509,7 +625,7 @@ class TestBackendAPI(unittest.TestCase):
                     "event_id": "11111111-2222-3333-4444-555555555552",
                     "schema_version": 1,
                     "host_id": "TEST-HOST",
-                    "agent_id": "spoofed-agent-two",
+                    "agent_id": agent_service._load_token(agent_token)["agent_id"],
                     "event_type": "security.auth",
                     "observed_at": "2026-09-16T14:30:01.000Z",
                     "sequence": 2,
@@ -529,8 +645,36 @@ class TestBackendAPI(unittest.TestCase):
             self.assertEqual(response.json()["ingested_count"], 2)
             self.assertEqual(
                 {event["agent_id"] for event in stream.call_args.args[1]},
-                {agent_id},
+                {agent_service._load_token(agent_token)["agent_id"]},
             )
+
+    def test_telemetry_rejects_conflicting_agent_and_tenant_identity(self):
+        agent_token = self.create_agent_credential()
+        identity = agent_service._load_token(agent_token)
+        payload = {
+            "host_id": "TEST-HOST",
+            "agent_id": identity["agent_id"],
+            "tenant_id": identity["tenant_id"],
+            "event_type": "telemetry.snapshot",
+            "observed_at": "2026-09-16T14:30:00.000Z",
+            "source": "windows_agent",
+            "data": {},
+        }
+        conflicting_agent = {**payload, "agent_id": "agent_spoofed"}
+        response = self.client.post(
+            "/api/v1/telemetry",
+            json=conflicting_agent,
+            headers={"Authorization": "Bearer " + agent_token},
+        )
+        self.assertEqual(response.status_code, 403)
+
+        conflicting_tenant = {**payload, "tenant_id": "tenant_spoofed"}
+        response = self.client.post(
+            "/api/v1/telemetry",
+            json=conflicting_tenant,
+            headers={"Authorization": "Bearer " + agent_token},
+        )
+        self.assertEqual(response.status_code, 403)
 
     def test_telemetry_invalid_schema_rejected(self):
         # Invalid schema missing required envelope fields

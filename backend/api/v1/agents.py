@@ -10,15 +10,17 @@ REST API router for Agent Management:
 
 from __future__ import annotations
 
+from uuid import UUID
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from backend.services.agent_service import agent_service
 from backend.api.v1.auth import require_admin
 from backend.services.ch_service import ch_service
 from backend.utils.logger import setup_logger
+from backend.utils.request_security import uses_secure_agent_transport
 
 router = APIRouter(prefix="/api/v1/agents", tags=["Agents"])
 logger = setup_logger("agents_api")
@@ -37,7 +39,10 @@ class AgentEnrollRequest(BaseModel):
     operating_system: str = Field(..., description="OS name and release")
     mac_address: str = Field(..., description="Primary network MAC address")
     machine_architecture: str = Field("x86_64", description="Host CPU architecture")
-    tenant_id: str = Field("default", description="Target tenant identifier")
+    tenant_id: str = Field(
+        "default",
+        description="Deprecated and ignored; tenant identity is assigned by the backend.",
+    )
 
 
 @router.get("", status_code=status.HTTP_200_OK, dependencies=[Depends(require_admin)])
@@ -70,11 +75,17 @@ async def create_agent_token(payload: GenerateTokenRequest = GenerateTokenReques
 
 
 @router.post("/enroll", status_code=status.HTTP_200_OK)
-async def enroll_agent(payload: AgentEnrollRequest):
+async def enroll_agent(payload: AgentEnrollRequest, request: Request):
     """
     Enroll an agent endpoint using a valid bootstrap token.
     Returns provisioned agent credentials (agent_id, tenant_id, agent_token).
     """
+    if not uses_secure_agent_transport(request):
+        raise HTTPException(
+            status_code=status.HTTP_426_UPGRADE_REQUIRED,
+            detail="Agent enrollment requires HTTPS with certificate verification.",
+        )
+
     enrollment = await agent_service.enroll_agent(
         bootstrap_token=payload.bootstrap_token,
         hostname=payload.hostname,
@@ -102,16 +113,38 @@ async def enroll_agent(payload: AgentEnrollRequest):
 
 @router.post("/renew", status_code=status.HTTP_200_OK)
 async def renew_agent_token(
+    request: Request,
     x_agent_token: Optional[str] = Header(default=None, alias="X-Agent-Token"),
+    authorization: Optional[str] = Header(default=None),
 ):
     """Validate and rotate the current credential for an enrolled agent."""
-    if not x_agent_token:
+    if not uses_secure_agent_transport(request):
+        raise HTTPException(
+            status_code=status.HTTP_426_UPGRADE_REQUIRED,
+            detail="Agent credential renewal requires HTTPS.",
+        )
+    bearer_token = None
+    if authorization:
+        scheme, separator, value = authorization.partition(" ")
+        if scheme.lower() != "bearer" or not separator or not value.strip():
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Malformed agent Authorization header.",
+            )
+        bearer_token = value.strip()
+    if x_agent_token and bearer_token and x_agent_token != bearer_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Conflicting agent credentials.",
+        )
+    token = bearer_token or x_agent_token
+    if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing agent authentication token header (X-Agent-Token).",
+            detail="Missing agent authentication credential.",
         )
 
-    token_data = await agent_service.renew_token(x_agent_token)
+    token_data = await agent_service.renew_token(token)
     if not token_data:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -127,16 +160,16 @@ async def renew_agent_token(
 
 
 @router.delete(
-    "/tokens/{token}",
+    "/tokens/{credential_id}",
     status_code=status.HTTP_200_OK,
     dependencies=[Depends(require_admin)],
 )
-async def revoke_agent_token(token: str):
-    """Revoke an agent enrollment token to prevent further ingestion."""
-    revoked = await agent_service.revoke_token(token)
+async def revoke_agent_token(credential_id: UUID):
+    """Revoke a credential by its opaque administrator-facing record ID."""
+    revoked = await agent_service.revoke_token(str(credential_id))
     if not revoked:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Token not found or already revoked.",
+            detail="Credential not found or already revoked.",
         )
     return {"status": "success", "message": "Token successfully revoked."}
