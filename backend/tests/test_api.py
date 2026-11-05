@@ -9,34 +9,22 @@ Unit and integration tests for Sysmon Backend REST API endpoints (Phase 2):
 - /api/v1/rules (listing, detail, toggling)
 - /api/v1/agents (listing, token generation, token revocation)
 - /api/v1/telemetry (ingestion, auth checking)
-
-Compatible with both `pytest` and Python's built-in `unittest`.
 """
 
 from __future__ import annotations
 
 import asyncio
-import sys
 import unittest
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from unittest.mock import patch
 
-# Ensure backend directory is in sys.path
-BACKEND_DIR = Path(__file__).resolve().parent.parent
-if str(BACKEND_DIR) not in sys.path:
-    sys.path.insert(0, str(BACKEND_DIR))
-
-import importlib.util
-spec = importlib.util.spec_from_file_location("backend_main", BACKEND_DIR / "main.py")
-backend_main = importlib.util.module_from_spec(spec)
-sys.modules["backend_main"] = backend_main
-spec.loader.exec_module(backend_main)
-app = backend_main.app
-
 from fastapi.testclient import TestClient
-from services.ch_service import ch_service
-from services.agent_service import _IN_MEMORY_TOKENS
+
+from backend import main as backend_main
+from backend.services.agent_service import _IN_MEMORY_TOKENS
+from backend.services.ch_service import ch_service
+
+app = backend_main.app
 
 
 class TestBackendAPI(unittest.TestCase):
@@ -439,7 +427,7 @@ class TestBackendAPI(unittest.TestCase):
             "severity": "informational",
             "data": {"cpu": 15.0},
         }
-        with patch("services.producer.kafka_service.stream_batch", return_value=None):
+        with patch("backend.services.producer.kafka_service.stream_batch", return_value=None):
             response = self.client.post("/api/v1/telemetry", json=payload)
             self.assertEqual(response.status_code, 202)
             data = response.json()
@@ -476,7 +464,7 @@ class TestBackendAPI(unittest.TestCase):
                 },
             ]
         }
-        with patch("services.producer.kafka_service.stream_batch", return_value=None):
+        with patch("backend.services.producer.kafka_service.stream_batch", return_value=None):
             response = self.client.post("/api/v1/telemetry", json=payload)
             self.assertEqual(response.status_code, 202)
             self.assertEqual(response.json()["ingested_count"], 2)

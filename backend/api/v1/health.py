@@ -9,10 +9,11 @@ Health check endpoints reporting the status of backend dependencies:
 
 import time
 from fastapi import APIRouter
-from services.producer import kafka_service
-from services.ch_service import ch_service
-from services.agent_service import agent_service
-from utils.logger import setup_logger
+
+from backend.services.producer import kafka_service
+from backend.services.ch_service import ch_service
+from backend.services.agent_service import agent_service
+from backend.utils.logger import setup_logger
 
 router = APIRouter(tags=["Health"])
 logger = setup_logger("health_api")

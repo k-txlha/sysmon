@@ -11,12 +11,13 @@ REST API router for Agent Management:
 from __future__ import annotations
 
 from typing import Optional
+
 from fastapi import APIRouter, Header, HTTPException, status
 from pydantic import BaseModel, Field
 
-from services.agent_service import agent_service
-from services.ch_service import ch_service
-from utils.logger import setup_logger
+from backend.services.agent_service import agent_service
+from backend.services.ch_service import ch_service
+from backend.utils.logger import setup_logger
 
 router = APIRouter(prefix="/api/v1/agents", tags=["Agents"])
 logger = setup_logger("agents_api")

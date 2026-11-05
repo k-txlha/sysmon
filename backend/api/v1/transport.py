@@ -14,12 +14,12 @@ from typing import Any, Dict, List, Optional, Union
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import ValidationError
 
-from config.settings import settings
-from models.envelope import EventEnvelope, IngestionBatchRequest
-from services.agent_service import agent_service
-from services.producer import kafka_service
-from utils.logger import setup_logger
-from utils.rate_limiter import RateLimiter
+from backend.config.settings import settings
+from backend.models.envelope import EventEnvelope, IngestionBatchRequest
+from backend.services.agent_service import agent_service
+from backend.services.producer import kafka_service
+from backend.utils.logger import setup_logger
+from backend.utils.rate_limiter import RateLimiter
 
 router = APIRouter(prefix="/api/v1", tags=["Ingestion"])
 logger = setup_logger("transport")

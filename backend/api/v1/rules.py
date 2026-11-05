@@ -11,12 +11,13 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
 import yaml
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 
-from config.settings import settings
-from utils.logger import setup_logger
+from backend.config.settings import settings
+from backend.utils.logger import setup_logger
 
 router = APIRouter(prefix="/api/v1/rules", tags=["Rules"])
 logger = setup_logger("rules_api")

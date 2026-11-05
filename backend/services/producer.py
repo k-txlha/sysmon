@@ -1,8 +1,9 @@
 import asyncio
 import json
 from aiokafka import AIOKafkaProducer
-from config.settings import settings
-from utils.logger import setup_logger
+
+from backend.config.settings import settings
+from backend.utils.logger import setup_logger
 
 logger = setup_logger("producer")
 

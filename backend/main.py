@@ -12,21 +12,20 @@ Provides:
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.v1.agents import router as agents_router
-from api.v1.alerts import router as alerts_router
-from api.v1.devices import router as devices_router
-from api.v1.events import router as events_router
-from api.v1.health import router as health_router
-from api.v1.rules import router as rules_router
-from api.v1.transport import router as transport_router
-from config.settings import settings
-from services.ch_service import ch_service
-from services.producer import kafka_service
-from utils.logger import setup_logger
+from backend.api.v1.agents import router as agents_router
+from backend.api.v1.alerts import router as alerts_router
+from backend.api.v1.devices import router as devices_router
+from backend.api.v1.events import router as events_router
+from backend.api.v1.health import router as health_router
+from backend.api.v1.rules import router as rules_router
+from backend.api.v1.transport import router as transport_router
+from backend.config.settings import settings
+from backend.services.ch_service import ch_service
+from backend.services.producer import kafka_service
+from backend.utils.logger import setup_logger
 
 logger = setup_logger("backend_main")
 
@@ -94,8 +93,3 @@ async def root():
         "status": "online",
         "docs": "/docs",
     }
-
-
-if __name__ == "__main__":
-    logger.info(f"Starting Sysmon Backend Gateway on port {settings.PORT}...")
-    uvicorn.run("main:app", host="0.0.0.0", port=settings.PORT, reload=True)

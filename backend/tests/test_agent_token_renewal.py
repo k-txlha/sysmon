@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timedelta, timezone
 
-from services.agent_service import (
+from backend.services.agent_service import (
     _IN_MEMORY_ENROLLED_AGENTS,
     _IN_MEMORY_TOKENS,
     AgentService,

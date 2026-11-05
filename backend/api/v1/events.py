@@ -10,10 +10,11 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Optional
+
 from fastapi import APIRouter, HTTPException, Query, status
 
-from services.ch_service import ch_service
-from utils.logger import setup_logger
+from backend.services.ch_service import ch_service
+from backend.utils.logger import setup_logger
 
 router = APIRouter(prefix="/api/v1/events", tags=["Events"])
 logger = setup_logger("events_api")

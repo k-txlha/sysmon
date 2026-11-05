@@ -18,8 +18,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import clickhouse_connect
 from clickhouse_connect.driver.client import Client
 
-from config.settings import settings
-from utils.logger import setup_logger
+from backend.config.settings import settings
+from backend.utils.logger import setup_logger
 
 logger = setup_logger("clickhouse_service")
 

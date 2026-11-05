@@ -12,11 +12,12 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Optional
+
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
-from services.ch_service import ch_service
-from utils.logger import setup_logger
+from backend.services.ch_service import ch_service
+from backend.utils.logger import setup_logger
 
 router = APIRouter(prefix="/api/v1/alerts", tags=["Alerts"])
 logger = setup_logger("alerts_api")

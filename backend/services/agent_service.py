@@ -15,8 +15,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 import uuid
 
-from config.settings import settings
-from utils.logger import setup_logger
+from backend.config.settings import settings
+from backend.utils.logger import setup_logger
 
 logger = setup_logger("agent_service")
 

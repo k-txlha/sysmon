@@ -11,8 +11,8 @@ from typing import DefaultDict, Deque
 from fastapi import HTTPException, status
 from starlette.requests import Request
 
-from config.settings import settings
-from utils.logger import setup_logger
+from backend.config.settings import settings
+from backend.utils.logger import setup_logger
 
 logger = setup_logger("rate_limiter")
 
