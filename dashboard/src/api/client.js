@@ -6,21 +6,79 @@
  */
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+let csrfToken = null;
+
+export const setCsrfToken = (token) => {
+  csrfToken = token;
+};
 
 async function request(path, options = {}) {
   const url = `${API_BASE}${path}`;
+  const method = (options.method || 'GET').toUpperCase();
+  const headers = { 'Content-Type': 'application/json', ...options.headers };
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(method) && csrfToken) {
+    headers['X-CSRF-Token'] = csrfToken;
+  }
   const res = await fetch(url, {
-    headers: { 'Content-Type': 'application/json', ...options.headers },
     ...options,
+    credentials: 'include',
+    headers,
   });
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
+    if (
+      res.status === 401 &&
+      !['/api/v1/auth/status', '/api/v1/auth/login', '/api/v1/auth/setup'].includes(path)
+    ) {
+      setCsrfToken(null);
+      window.dispatchEvent(new Event('sysmon-auth-expired'));
+    }
     throw new Error(body.detail || `API error ${res.status}`);
   }
 
   return res.json();
 }
+
+// ── Administrator Authentication ────────────────────────────
+export const getAuthStatus = () => request('/api/v1/auth/status');
+
+export const getCurrentAdmin = async () => {
+  const result = await request('/api/v1/auth/me');
+  setCsrfToken(result.csrf_token);
+  return result.user;
+};
+
+export const setupAdmin = async (username, password) => {
+  const result = await request('/api/v1/auth/setup', {
+    method: 'POST',
+    body: JSON.stringify({ username, password }),
+  });
+  setCsrfToken(result.csrf_token);
+  return result.user;
+};
+
+export const loginAdmin = async (username, password) => {
+  const result = await request('/api/v1/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ username, password }),
+  });
+  setCsrfToken(result.csrf_token);
+  return result.user;
+};
+
+export const logoutAdmin = async () => {
+  await request('/api/v1/auth/logout', { method: 'POST' });
+  setCsrfToken(null);
+};
+
+export const changeAdminPassword = async (newPassword) => {
+  await request('/api/v1/auth/password', {
+    method: 'POST',
+    body: JSON.stringify({ new_password: newPassword }),
+  });
+  setCsrfToken(null);
+};
 
 // ── Alerts ──────────────────────────────────────────────────
 export const getAlerts = (params = {}) => {
@@ -88,4 +146,4 @@ export const revokeAgentToken = (token) =>
   request(`/api/v1/agents/tokens/${token}`, { method: 'DELETE' });
 
 // ── Health ──────────────────────────────────────────────────
-export const getHealth = () => request('/api/v1/health');
+export const getHealth = () => request('/health');

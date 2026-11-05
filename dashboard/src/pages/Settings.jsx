@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  Settings as SettingsIcon,
   Key,
   Plus,
   Trash2,
@@ -11,13 +10,13 @@ import {
   Bell,
   Database,
   RefreshCw,
-  AlertCircle,
 } from 'lucide-react';
 import {
   getAgentTokens,
   createAgentToken,
   revokeAgentToken,
   getHealth,
+  changeAdminPassword,
 } from '../api/client';
 
 export default function Settings() {
@@ -36,12 +35,15 @@ export default function Settings() {
   const [slackWebhook, setSlackWebhook] = useState('');
   const [discordWebhook, setDiscordWebhook] = useState('');
   const [savedWebhooks, setSavedWebhooks] = useState(false);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [passwordError, setPasswordError] = useState('');
 
   const fetchTokenData = useCallback(async () => {
     setTokensLoading(true);
     try {
       const res = await getAgentTokens();
-      setTokens(Array.isArray(res) ? res : res.tokens || []);
+      setTokens(Array.isArray(res) ? res : res.items || []);
     } catch (err) {
       console.error('Failed to load agent tokens:', err);
       setTokens([]);
@@ -105,6 +107,21 @@ export default function Settings() {
     setTimeout(() => setSavedWebhooks(false), 3000);
   };
 
+  const handlePasswordChange = async (e) => {
+    e.preventDefault();
+    setPasswordError('');
+    if (newPassword !== confirmPassword) {
+      setPasswordError('Passwords do not match.');
+      return;
+    }
+    try {
+      await changeAdminPassword(newPassword);
+      window.location.reload();
+    } catch (err) {
+      setPasswordError(err.message);
+    }
+  };
+
   return (
     <div className="page-container">
       {/* Header */}
@@ -116,6 +133,49 @@ export default function Settings() {
       </div>
 
       <div className="settings-stack">
+        <div className="card">
+          <div className="card-header">
+            <div className="flex-align gap-2">
+              <ShieldCheck size={18} className="text-accent-blue" />
+              <h2 className="card-title">Administrator Password</h2>
+            </div>
+          </div>
+          <div className="card-content">
+            <form onSubmit={handlePasswordChange} className="webhook-form-stack">
+              <div className="form-group">
+                <label className="form-label" htmlFor="new-admin-password">New password</label>
+                <input
+                  id="new-admin-password"
+                  className="form-input"
+                  type="password"
+                  autoComplete="new-password"
+                  minLength={12}
+                  maxLength={128}
+                  value={newPassword}
+                  onChange={(event) => setNewPassword(event.target.value)}
+                  required
+                />
+              </div>
+              <div className="form-group">
+                <label className="form-label" htmlFor="confirm-admin-password">Confirm password</label>
+                <input
+                  id="confirm-admin-password"
+                  className="form-input"
+                  type="password"
+                  autoComplete="new-password"
+                  minLength={12}
+                  maxLength={128}
+                  value={confirmPassword}
+                  onChange={(event) => setConfirmPassword(event.target.value)}
+                  required
+                />
+              </div>
+              {passwordError && <p className="auth-error" role="alert">{passwordError}</p>}
+              <button type="submit" className="btn btn-primary">Change password</button>
+            </form>
+          </div>
+        </div>
+
         {/* System Health Status */}
         <div className="card">
           <div className="card-header">
@@ -226,7 +286,7 @@ export default function Settings() {
                   <RefreshCw size={16} className="animate-spin text-accent-blue" />
                   <span>Loading tokens...</span>
                 </div>
-              ) : tokens.length === 0 ? (
+              ) : tokens.filter((token) => !token.revoked).length === 0 ? (
                 <p className="text-muted text-sm italic">No active tokens found. Generate one above.</p>
               ) : (
                 <div className="token-table-wrapper">
@@ -240,29 +300,17 @@ export default function Settings() {
                       </tr>
                     </thead>
                     <tbody>
-                      {tokens.map((t, idx) => {
-                        const tokenStr = typeof t === 'string' ? t : t.token;
+                      {tokens.filter((token) => !token.revoked).map((t) => {
+                        const tokenId = t.token_id;
                         const desc = t.description || 'Agent Token';
                         const created = t.created_at ? new Date(t.created_at).toLocaleDateString() : 'Active';
                         return (
-                          <tr key={tokenStr || idx}>
+                          <tr key={tokenId}>
                             <td>
                               <div className="flex-align gap-2">
                                 <code className="mono-badge">
-                                  {tokenStr ? `${tokenStr.slice(0, 12)}...${tokenStr.slice(-6)}` : '••••••••'}
+                                  {tokenId ? `${tokenId.slice(0, 12)}…` : 'Credential stored'}
                                 </code>
-                                <button
-                                  type="button"
-                                  className="btn-icon sm"
-                                  onClick={() => handleCopy(tokenStr)}
-                                  title="Copy full token"
-                                >
-                                  {copiedToken === tokenStr ? (
-                                    <Check size={12} className="text-accent-green" />
-                                  ) : (
-                                    <Copy size={12} />
-                                  )}
-                                </button>
                               </div>
                             </td>
                             <td className="text-secondary">{desc}</td>
@@ -271,7 +319,7 @@ export default function Settings() {
                               <button
                                 type="button"
                                 className="btn-icon danger sm"
-                                onClick={() => handleRevokeToken(tokenStr)}
+                                onClick={() => handleRevokeToken(tokenId)}
                                 title="Revoke Token"
                               >
                                 <Trash2 size={14} />

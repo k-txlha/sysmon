@@ -1,4 +1,4 @@
-import { NavLink, useLocation } from 'react-router-dom';
+import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard,
   Monitor,
@@ -8,6 +8,7 @@ import {
   Settings,
   Shield,
   Activity,
+  LogOut,
 } from 'lucide-react';
 
 const navItems = [
@@ -21,9 +22,7 @@ const navItems = [
   { to: '/settings', icon: Settings, label: 'Settings' },
 ];
 
-export default function Sidebar() {
-  const location = useLocation();
-
+export default function Sidebar({ onLogout }) {
   return (
     <aside className="sidebar">
       {/* Brand Header */}
@@ -67,6 +66,10 @@ export default function Sidebar() {
           <Activity size={13} />
           <span>System Operational</span>
         </div>
+        <button className="sidebar-signout" type="button" onClick={onLogout}>
+          <LogOut size={14} />
+          <span>Sign out</span>
+        </button>
       </div>
     </aside>
   );
