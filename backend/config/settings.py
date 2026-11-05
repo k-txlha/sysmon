@@ -1,4 +1,5 @@
 import os
+import logging
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -16,6 +17,24 @@ class BackendSettings:
                         key, val = line.split("=", 1)
                         os.environ.setdefault(key.strip(), val.strip())
         self.PORT = int(os.getenv("PORT", 8000))
+        self.ENVIRONMENT = os.getenv("ENVIRONMENT", "development").strip().lower()
+        self.AUTH_DB_PATH = Path(
+            os.getenv(
+                "AUTH_DB_PATH",
+                str(BASE_DIR.parent / "data" / "sysmon_auth.db"),
+            )
+        ).expanduser()
+        self.AUTH_SESSION_COOKIE_SECURE = (
+            os.getenv("AUTH_SESSION_COOKIE_SECURE", "").lower() in ("true", "1", "yes")
+            if os.getenv("AUTH_SESSION_COOKIE_SECURE") is not None
+            else self.ENVIRONMENT == "production"
+        )
+        self.TLS_CERT_FILE = os.getenv("TLS_CERT_FILE")
+        self.TLS_KEY_FILE = os.getenv("TLS_KEY_FILE")
+        if bool(self.TLS_CERT_FILE) != bool(self.TLS_KEY_FILE):
+            raise ValueError("TLS_CERT_FILE and TLS_KEY_FILE must be configured together.")
+        if self.ENVIRONMENT == "production" and not self.AUTH_SESSION_COOKIE_SECURE:
+            raise ValueError("Production deployments must enable secure administrator cookies.")
         self.KAFKA_BOOTSTRAP_SERVERS = os.getenv(
             "KAFKA_BOOTSTRAP_SERVERS", "localhost:29092"
         )
@@ -30,9 +49,12 @@ class BackendSettings:
         self.CLICKHOUSE_DB = os.getenv("CLICKHOUSE_DB", "metrics")
 
         # Agent Authentication & Security
-        self.REQUIRE_AGENT_AUTH = (
-            os.getenv("REQUIRE_AGENT_AUTH", "false").lower() in ("true", "1", "yes")
-        )
+        configured_agent_auth = os.getenv("REQUIRE_AGENT_AUTH", "true").lower()
+        if configured_agent_auth in ("false", "0", "no"):
+            logging.getLogger(__name__).warning(
+                "REQUIRE_AGENT_AUTH=false is ignored; agent authentication is mandatory."
+            )
+        self.REQUIRE_AGENT_AUTH = True
         self.AGENT_TOKEN_HEADER = os.getenv("AGENT_TOKEN_HEADER", "X-Agent-Token")
 
         # CORS
@@ -40,6 +62,8 @@ class BackendSettings:
         self.ALLOWED_ORIGINS = [
             origin.strip() for origin in allowed_origins_raw.split(",") if origin.strip()
         ]
+        if self.ENVIRONMENT == "production" and self.ALLOWED_ORIGINS == ["*"]:
+            raise ValueError("Production deployments must configure explicit ALLOWED_ORIGINS.")
 
         # Detection Rules Directory
         # Default to worker/detection/rules relative to repo root
@@ -48,4 +72,3 @@ class BackendSettings:
 
 
 settings = BackendSettings()
-

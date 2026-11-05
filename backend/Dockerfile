@@ -19,6 +19,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY backend /app/backend
 COPY worker/detection/rules /app/worker/detection/rules
 
+RUN groupadd --system sysmon \
+    && useradd --system --gid sysmon --home-dir /app --shell /usr/sbin/nologin sysmon \
+    && mkdir -p /app/data \
+    && chown sysmon:sysmon /app/data
+
+USER sysmon
+
 EXPOSE 8000
 
 CMD ["python", "-m", "backend"]

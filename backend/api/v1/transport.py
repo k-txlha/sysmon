@@ -31,10 +31,8 @@ rate_limiter = RateLimiter(requests_limit=10, window_seconds=10)
 async def verify_agent_auth(
     x_agent_token: Optional[str] = Header(default=None, alias="X-Agent-Token"),
     authorization: Optional[str] = Header(default=None),
-) -> None:
-    """Validates the agent token when REQUIRE_AGENT_AUTH is enabled."""
-    if not settings.REQUIRE_AGENT_AUTH:
-        return
+) -> str:
+    """Validates the agent token and returns its backend-bound identity."""
 
     token = x_agent_token
     if not token and authorization and authorization.startswith("Bearer "):
@@ -46,20 +44,24 @@ async def verify_agent_auth(
             detail="Missing agent authentication token header (X-Agent-Token or Authorization).",
         )
 
-    is_valid = await agent_service.validate_token(token)
-    if not is_valid:
+    agent_id = await agent_service.get_authenticated_agent_id(token)
+    if not agent_id:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
+            status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or revoked agent token.",
         )
+    return agent_id
 
 
 @router.post(
     "/telemetry",
     status_code=status.HTTP_202_ACCEPTED,
-    dependencies=[Depends(rate_limiter), Depends(verify_agent_auth)],
+    dependencies=[Depends(rate_limiter)],
 )
-async def receive_telemetry(payload: Union[IngestionBatchRequest, EventEnvelope, List[EventEnvelope], Dict[str, Any]]):
+async def receive_telemetry(
+    payload: Union[IngestionBatchRequest, EventEnvelope, List[EventEnvelope], Dict[str, Any]],
+    authenticated_agent_id: str = Depends(verify_agent_auth),
+):
     """
     Ingests standardized EDR EventEnvelope payloads.
     Accepts a single EventEnvelope, an IngestionBatchRequest, or a list of EventEnvelopes.
@@ -108,6 +110,7 @@ async def receive_telemetry(payload: Union[IngestionBatchRequest, EventEnvelope,
     unique_agents = set()
     raw_envelopes = []
     for env in envelopes:
+        env.agent_id = authenticated_agent_id
         env.received_at = received_at_ts
         unique_agents.add(env.agent_id)
         raw_envelopes.append(env.model_dump(mode="json"))

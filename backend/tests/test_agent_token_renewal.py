@@ -32,7 +32,7 @@ def test_renewal_rotates_token_without_changing_agent_identity():
         )
         assert enrolled is not None
         old_token = enrolled["agent_token"]
-        _IN_MEMORY_TOKENS[old_token]["expiration"] = (
+        _IN_MEMORY_TOKENS[service._token_key(old_token)]["expiration"] = (
             datetime.now(timezone.utc) + timedelta(minutes=1)
         ).isoformat()
 
@@ -42,14 +42,15 @@ def test_renewal_rotates_token_without_changing_agent_identity():
         assert replacement["renewed"] is True
         assert replacement["token"] != old_token
         assert replacement["agent_id"] == enrolled["agent_id"]
-        assert _IN_MEMORY_ENROLLED_AGENTS[enrolled["agent_id"]]["current_token"] == replacement["token"]
+        assert _IN_MEMORY_ENROLLED_AGENTS[enrolled["agent_id"]]["current_token_hash"] == service._token_key(replacement["token"])
         assert await service.validate_token(old_token)
         assert await service.validate_token(replacement["token"])
 
         recovered = await service.renew_token(old_token)
         assert recovered is not None
-        assert recovered["renewed"] is False
-        assert recovered["token"] == replacement["token"]
+        assert recovered["renewed"] is True
+        assert recovered["token"] != replacement["token"]
+        assert recovered["agent_id"] == replacement["agent_id"]
 
     asyncio.run(scenario())
 
@@ -94,7 +95,7 @@ def test_renewal_rejects_inactive_agent():
         )
         assert enrolled is not None
         token = enrolled["agent_token"]
-        _IN_MEMORY_TOKENS[token]["expiration"] = (
+        _IN_MEMORY_TOKENS[service._token_key(token)]["expiration"] = (
             datetime.now(timezone.utc) + timedelta(minutes=1)
         ).isoformat()
         _IN_MEMORY_ENROLLED_AGENTS[enrolled["agent_id"]]["status"] = "inactive"
@@ -108,7 +109,7 @@ def test_expired_and_revoked_bootstrap_tokens_cannot_enroll():
     async def scenario():
         service = _service_without_redis()
         expired = await service.generate_token()
-        _IN_MEMORY_TOKENS[expired["token"]]["expiration"] = (
+        _IN_MEMORY_TOKENS[service._token_key(expired["token"])]["expiration"] = (
             datetime.now(timezone.utc) - timedelta(seconds=1)
         ).isoformat()
         assert await service.enroll_agent(

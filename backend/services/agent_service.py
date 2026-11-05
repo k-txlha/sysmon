@@ -8,6 +8,7 @@ and heartbeat tracking. Supports Redis storage with automatic in-memory fallback
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import secrets
 import time
@@ -56,7 +57,6 @@ class AgentService:
         now = datetime.now(timezone.utc)
         now_iso = now.isoformat()
         token_data = {
-            "token": token_str,
             "description": description,
             "created_at": now_iso,
             "last_used_at": None,
@@ -64,29 +64,56 @@ class AgentService:
             "token_type": "bootstrap",
             "revoked": False,
         }
+        token_key = self._token_key(token_str)
 
-        # Always save to in-memory store
-        _IN_MEMORY_TOKENS[token_str] = token_data
+        _IN_MEMORY_TOKENS[token_key] = token_data
 
         r = await self._get_redis()
         if r:
             try:
-                await r.hset("sysmon:agent_tokens", token_str, json.dumps(token_data))
+                await r.hset("sysmon:agent_tokens", token_key, json.dumps(token_data))
             except Exception as e:
                 logger.warning(f"Redis error saving token ({e}), stored in memory.")
 
-        return token_data
+        return {**token_data, "token": token_str}
 
-    async def _load_token(self, token_str: str) -> Optional[Dict[str, Any]]:
+    @staticmethod
+    def _token_key(token_str: str) -> str:
+        return hashlib.sha256(token_str.encode("utf-8")).hexdigest()
+
+    async def _load_token_by_key(self, token_key: str) -> Optional[Dict[str, Any]]:
         r = await self._get_redis()
         if r:
             try:
-                raw = await r.hget("sysmon:agent_tokens", token_str)
+                raw = await r.hget("sysmon:agent_tokens", token_key)
                 if raw:
                     return json.loads(raw)
             except Exception as e:
                 logger.warning(f"Redis error reading token ({e}), checking memory.")
-        return _IN_MEMORY_TOKENS.get(token_str)
+        return _IN_MEMORY_TOKENS.get(token_key)
+
+    async def _load_token(self, token_str: str) -> Optional[Dict[str, Any]]:
+        token_key = self._token_key(token_str)
+        token_data = await self._load_token_by_key(token_key)
+        if token_data is not None:
+            return token_data
+        r = await self._get_redis()
+        if not r:
+            return None
+        try:
+            legacy_raw = await r.hget("sysmon:agent_tokens", token_str)
+            if not legacy_raw:
+                return None
+            token_data = json.loads(legacy_raw)
+            token_data.pop("token", None)
+            async with r.pipeline(transaction=True) as pipe:
+                pipe.hset("sysmon:agent_tokens", token_key, json.dumps(token_data))
+                pipe.hdel("sysmon:agent_tokens", token_str)
+                await pipe.execute()
+            return token_data
+        except Exception as e:
+            logger.error(f"Could not migrate legacy agent token storage: {e}")
+            return None
 
     async def _load_agent(self, agent_id: str) -> Optional[Dict[str, Any]]:
         r = await self._get_redis()
@@ -94,7 +121,18 @@ class AgentService:
             try:
                 raw = await r.hget("sysmon:enrolled_agents", agent_id)
                 if raw:
-                    return json.loads(raw)
+                    agent = json.loads(raw)
+                    legacy_current_token = agent.pop("current_token", None)
+                    legacy_agent_token = agent.pop("agent_token", None)
+                    legacy_token = legacy_current_token or legacy_agent_token
+                    if legacy_token:
+                        agent["current_token_hash"] = self._token_key(legacy_token)
+                        await r.hset(
+                            "sysmon:enrolled_agents",
+                            agent_id,
+                            json.dumps(agent),
+                        )
+                    return agent
             except Exception as e:
                 logger.warning(f"Redis error reading agent ({e}), checking memory.")
         return _IN_MEMORY_ENROLLED_AGENTS.get(agent_id)
@@ -142,33 +180,21 @@ class AgentService:
             if not agent or agent.get("status", "active") != "active":
                 return None
 
-            current_token = agent.get("current_token") or agent.get("agent_token")
-            if not isinstance(current_token, str):
+            current_token_hash = agent.get("current_token_hash")
+            if not isinstance(current_token_hash, str):
                 return None
-            if current_token != token_str:
-                replacement = token_data.get("superseded_by")
-                if replacement != current_token:
-                    return None
-                current_data = await self._load_token(current_token)
-                if (
-                    not current_data
-                    or current_data.get("agent_id") != agent_id
-                    or not await self._is_token_active(current_data, now)
-                ):
-                    return None
-                return {**current_data, "renewed": False}
 
             expiration = self._expiration(token_data)
             if expiration and expiration > now + TOKEN_RENEWAL_WINDOW:
                 return {
                     **token_data,
+                    "token": token_str,
                     "renewed": False,
                 }
 
             new_token_str = f"sysmon_agent_{secrets.token_urlsafe(32)}"
             new_expiration = now + AGENT_TOKEN_TTL
             new_token_data = {
-                "token": new_token_str,
                 "description": token_data.get("description", f"Agent {agent_id}"),
                 "created_at": now.isoformat(),
                 "last_used_at": None,
@@ -179,11 +205,14 @@ class AgentService:
             }
             # Keep the previous credential valid until its own expiry so requests
             # already in flight during rotation can complete.
-            previous_token_data = {**token_data, "superseded_by": new_token_str}
+            new_token_hash = self._token_key(new_token_str)
+            previous_token_data = {
+                **token_data,
+                "superseded_by_hash": new_token_hash,
+            }
             updated_agent = {
                 **agent,
-                "current_token": new_token_str,
-                "agent_token": new_token_str,
+                "current_token_hash": new_token_hash,
             }
 
             r = await self._get_redis()
@@ -195,8 +224,8 @@ class AgentService:
                 local old = cjson.decode(old_raw)
                 local agent = cjson.decode(agent_raw)
                 if old.revoked == true or (agent.status and agent.status ~= 'active') then return 0 end
-                local current = agent.current_token or agent.agent_token
-                if current ~= ARGV[1] then return 0 end
+                local current = agent.current_token_hash
+                if current ~= ARGV[1] and old.superseded_by_hash ~= current then return 0 end
                 redis.call('HSET', KEYS[1], ARGV[1], ARGV[3])
                 redis.call('HSET', KEYS[1], ARGV[4], ARGV[5])
                 redis.call('HSET', KEYS[2], ARGV[2], ARGV[6])
@@ -208,10 +237,10 @@ class AgentService:
                         2,
                         "sysmon:agent_tokens",
                         "sysmon:enrolled_agents",
-                        token_str,
+                        self._token_key(token_str),
                         agent_id,
                         json.dumps(previous_token_data),
-                        new_token_str,
+                        new_token_hash,
                         json.dumps(new_token_data),
                         json.dumps(updated_agent),
                     )
@@ -221,23 +250,35 @@ class AgentService:
                     logger.error(f"Redis error atomically rotating agent token: {e}")
                     return None
 
-            _IN_MEMORY_TOKENS[token_str] = previous_token_data
-            _IN_MEMORY_TOKENS[new_token_str] = new_token_data
+            _IN_MEMORY_TOKENS[self._token_key(token_str)] = previous_token_data
+            _IN_MEMORY_TOKENS[new_token_hash] = new_token_data
             _IN_MEMORY_ENROLLED_AGENTS[agent_id] = updated_agent
-            return {**new_token_data, "renewed": True}
+            return {**new_token_data, "token": new_token_str, "renewed": True}
 
     async def validate_token(self, token_str: str) -> bool:
         """Validates if a given token is active and not revoked."""
+        return await self._get_active_token(token_str) is not None
+
+    async def get_authenticated_agent_id(self, token_str: str) -> Optional[str]:
+        """Return the enrolled agent identity associated with a valid credential."""
+        token_data = await self._get_active_token(token_str)
+        if not token_data:
+            return None
+        agent_id = token_data.get("agent_id")
+        return agent_id if isinstance(agent_id, str) and agent_id else None
+
+    async def _get_active_token(self, token_str: str) -> Optional[Dict[str, Any]]:
         if not token_str:
-            return False
+            return None
 
         data = await self._load_token(token_str)
         now = datetime.now(timezone.utc)
         if not data or not await self._is_token_active(data, now):
-            return False
+            return None
 
         last_used_at = now.isoformat()
-        if _IN_MEMORY_TOKENS.get(token_str) is data:
+        token_key = self._token_key(token_str)
+        if _IN_MEMORY_TOKENS.get(token_key) is data:
             data["last_used_at"] = last_used_at
         r = await self._get_redis()
         if r:
@@ -254,12 +295,12 @@ class AgentService:
                     """,
                     1,
                     "sysmon:agent_tokens",
-                    token_str,
+                    token_key,
                     last_used_at,
                 )
             except Exception as e:
                 logger.warning(f"Redis error updating token usage ({e}).")
-        return True
+        return data
 
     async def enroll_agent(
         self,
@@ -296,8 +337,7 @@ class AgentService:
             enrollment_record = {
                 "agent_id": agent_id,
                 "tenant_id": tenant_id,
-                "agent_token": agent_token,
-                "current_token": agent_token,
+                "current_token_hash": self._token_key(agent_token),
                 "hostname": hostname,
                 "operating_system": operating_system,
                 "mac_address": mac_address,
@@ -306,7 +346,6 @@ class AgentService:
                 "status": "active",
             }
             token_data = {
-                "token": agent_token,
                 "description": f"Enrolled Agent: {hostname} ({agent_id})",
                 "created_at": now_iso,
                 "last_used_at": now_iso,
@@ -324,8 +363,8 @@ class AgentService:
                         pipe.hset(
                             "sysmon:agent_tokens",
                             mapping={
-                                bootstrap_token: json.dumps(bootstrap),
-                                agent_token: json.dumps(token_data),
+                                self._token_key(bootstrap_token): json.dumps(bootstrap),
+                                self._token_key(agent_token): json.dumps(token_data),
                             },
                         )
                         pipe.hset(
@@ -337,11 +376,11 @@ class AgentService:
                 except Exception as e:
                     logger.warning(f"Redis error saving enrolled agent ({e}).")
 
-            _IN_MEMORY_TOKENS[bootstrap_token] = bootstrap
-            _IN_MEMORY_TOKENS[agent_token] = token_data
+            _IN_MEMORY_TOKENS[self._token_key(bootstrap_token)] = bootstrap
+            _IN_MEMORY_TOKENS[self._token_key(agent_token)] = token_data
             _IN_MEMORY_ENROLLED_AGENTS[agent_id] = enrollment_record
             enrollment_record["expires_at"] = expiration.isoformat()
-            return enrollment_record
+            return {**enrollment_record, "agent_token": agent_token}
 
     async def list_tokens(self) -> List[Dict[str, Any]]:
         """Lists all registered agent enrollment tokens (merging Redis and in-memory)."""
@@ -351,20 +390,47 @@ class AgentService:
             try:
                 raw_dict = await r.hgetall("sysmon:agent_tokens")
                 if raw_dict:
-                    for val in raw_dict.values():
+                    for redis_key, val in raw_dict.items():
+                        token_key_from_redis = (
+                            redis_key.decode("utf-8")
+                            if isinstance(redis_key, bytes)
+                            else redis_key
+                        )
                         tok_obj = json.loads(val)
-                        tokens_map[tok_obj["token"]] = tok_obj
+                        raw_token = tok_obj.pop("token", None)
+                        if raw_token:
+                            token_key = self._token_key(raw_token)
+                            tokens_map[token_key] = tok_obj
+                            await r.hset(
+                                "sysmon:agent_tokens", token_key, json.dumps(tok_obj)
+                            )
+                            if token_key_from_redis != token_key:
+                                await r.hdel("sysmon:agent_tokens", redis_key)
+                        else:
+                            tokens_map[token_key_from_redis] = tok_obj
             except Exception as e:
                 logger.warning(
                     f"Redis error listing tokens ({e}), using in-memory store."
                 )
 
-        return list(tokens_map.values())
+        return [
+            {
+                "token_id": token_key,
+                **{key: value for key, value in token.items() if key != "token"},
+            }
+            for token_key, token in tokens_map.items()
+        ]
 
     async def revoke_token(self, token_str: str) -> bool:
         """Revokes an existing agent token."""
         async with self._token_lock:
-            token_data = await self._load_token(token_str)
+            token_key = (
+                token_str
+                if len(token_str) == 64
+                and all(character in "0123456789abcdef" for character in token_str)
+                else self._token_key(token_str)
+            )
+            token_data = await self._load_token_by_key(token_key)
             if not token_data:
                 return False
             token_data["revoked"] = True
@@ -377,7 +443,11 @@ class AgentService:
             if r:
                 try:
                     async with r.pipeline(transaction=True) as pipe:
-                        pipe.hset("sysmon:agent_tokens", token_str, json.dumps(token_data))
+                        pipe.hset(
+                            "sysmon:agent_tokens",
+                            token_key,
+                            json.dumps(token_data),
+                        )
                         if agent and agent_id:
                             pipe.hset(
                                 "sysmon:enrolled_agents",
@@ -388,7 +458,7 @@ class AgentService:
                 except Exception as e:
                     logger.warning(f"Redis error revoking token ({e}), revoked in memory.")
 
-            _IN_MEMORY_TOKENS[token_str] = token_data
+            _IN_MEMORY_TOKENS[token_key] = token_data
             if agent and agent_id:
                 _IN_MEMORY_ENROLLED_AGENTS[agent_id] = agent
             return True

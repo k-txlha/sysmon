@@ -12,10 +12,11 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field
 
 from backend.services.agent_service import agent_service
+from backend.api.v1.auth import require_admin
 from backend.services.ch_service import ch_service
 from backend.utils.logger import setup_logger
 
@@ -39,7 +40,7 @@ class AgentEnrollRequest(BaseModel):
     tenant_id: str = Field("default", description="Target tenant identifier")
 
 
-@router.get("", status_code=status.HTTP_200_OK)
+@router.get("", status_code=status.HTTP_200_OK, dependencies=[Depends(require_admin)])
 async def list_agents():
     """List all agents currently or previously registered with the platform."""
     try:
@@ -50,14 +51,18 @@ async def list_agents():
         return {"items": [], "total": 0}
 
 
-@router.get("/tokens", status_code=status.HTTP_200_OK)
+@router.get("/tokens", status_code=status.HTTP_200_OK, dependencies=[Depends(require_admin)])
 async def list_agent_tokens():
     """List all active and revoked agent enrollment tokens."""
     tokens = await agent_service.list_tokens()
     return {"items": tokens, "total": len(tokens)}
 
 
-@router.post("/token", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/token",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_admin)],
+)
 async def create_agent_token(payload: GenerateTokenRequest = GenerateTokenRequest()):
     """Provision a new secure enrollment token for an agent."""
     token_data = await agent_service.generate_token(description=payload.description)
@@ -121,7 +126,11 @@ async def renew_agent_token(
     }
 
 
-@router.delete("/tokens/{token}", status_code=status.HTTP_200_OK)
+@router.delete(
+    "/tokens/{token}",
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(require_admin)],
+)
 async def revoke_agent_token(token: str):
     """Revoke an agent enrollment token to prevent further ingestion."""
     revoked = await agent_service.revoke_token(token)

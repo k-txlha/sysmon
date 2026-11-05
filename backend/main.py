@@ -12,10 +12,11 @@ Provides:
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.api.v1.agents import router as agents_router
+from backend.api.v1.auth import require_admin, router as auth_router
 from backend.api.v1.alerts import router as alerts_router
 from backend.api.v1.devices import router as devices_router
 from backend.api.v1.events import router as events_router
@@ -77,11 +78,12 @@ app.add_middleware(
 
 # Mount API routers
 app.include_router(health_router)
+app.include_router(auth_router)
 app.include_router(transport_router)
-app.include_router(alerts_router)
-app.include_router(devices_router)
-app.include_router(events_router)
-app.include_router(rules_router)
+app.include_router(alerts_router, dependencies=[Depends(require_admin)])
+app.include_router(devices_router, dependencies=[Depends(require_admin)])
+app.include_router(events_router, dependencies=[Depends(require_admin)])
+app.include_router(rules_router, dependencies=[Depends(require_admin)])
 app.include_router(agents_router)
 
 

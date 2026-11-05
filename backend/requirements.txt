@@ -10,3 +10,4 @@ PyYAML>=6.0.0
 requests>=2.31.0
 httpx>=0.25.0
 python-multipart>=0.0.9
+argon2-cffi>=23.1.0
