@@ -192,13 +192,14 @@ Every event transmitted through Sysmon adheres to the strict EDR Event Envelope 
 ### 2. 🛡️ Agent Resilience, Local Disk Buffer & Service Management
 
 - **Local Bounded Disk Buffer (`agent/utils/buffer.py`)**: Events are staged in an SQLite WAL-mode FIFO queue. If the backend is unreachable or rate-limits with 429, events remain safely stored on disk and drain automatically upon reconnection.
-- **OS Service Management (`agent/service.py`)**: Install, start, stop, and query the agent as a native OS service on boot (Linux `systemd` unit or Windows background service).
-- **Automated Bootstrap Enrollment (`agent/enroll.py`)**: Agent exchanges a bootstrap token for permanent, dedicated agent credentials via `POST /api/v1/agents/enroll`.
+- **OS Service Management (`agent/service.py`)**: Install, start, stop, and query the agent at boot (Linux `systemd` unit or Windows Task Scheduler task).
+- **Automated Bootstrap Enrollment (`agent/enroll.py`)**: Agent exchanges a short-lived, single-use bootstrap token for a permanent credential and backend-assigned agent/tenant identity via `POST /api/v1/agents/enroll`; enrollment saves these values to the local agent configuration.
 - **Agent Health Diagnostics (`agent.health`)**: Automatically captures and transmits agent process memory (RSS MB), process CPU usage, local queue depth, and dropped event counters, persisted in ClickHouse `AGENT_HEALTH` table.
 
 ### 3. ⚡ Ingestion Gateway & Security Analytics API (`backend/`)
 
-- **Strict Ingestion**: Validates all incoming payloads against `EventEnvelope` and `IngestionBatchRequest` schemas; rejects malformed inputs with `HTTP 422`.
+- **Authenticated Ingestion**: Requires an active agent credential, derives identity from the SQLite credential registry, and rejects mismatched `agent_id` or `tenant_id` values. Remote agent enrollment, telemetry, and renewal require verified HTTPS; loopback HTTP is allowed only for development.
+- **Strict Ingestion**: Validates incoming payloads against `EventEnvelope` and `IngestionBatchRequest` schemas; rejects malformed inputs with `HTTP 422`.
 - **Concurrent Batch Streaming**: High-throughput non-blocking streaming to Kafka topics using `asyncio.gather`.
 - **Server-Side Timestamping**: Adds `received_at` UTC timestamps and records live heartbeats in Redis.
 - **Analytical Query Engine**: `ClickHouseQueryService` provides aggregated KPI statistics, device history, agent health diagnostics, and threat analytics.
@@ -241,10 +242,11 @@ Interactive OpenAPI documentation is available at `http://localhost:8000/docs`.
 | `GET`    | `/api/v1/events`                     | Query raw security authentication logs with filters and pagination         |
 | `GET`    | `/api/v1/rules`                      | List all active detection rules                                            |
 | `POST`   | `/api/v1/rules/{rule_name}/toggle`   | Enable or disable a detection rule                                         |
-| `GET`    | `/api/v1/agents/tokens`              | List registered agent enrollment tokens                                    |
-| `POST`   | `/api/v1/agents/token`               | Generate a new secure agent enrollment token                               |
-| `POST`   | `/api/v1/agents/enroll`              | Bootstrap enrollment handshake to provision agent credentials              |
-| `DELETE` | `/api/v1/agents/tokens/{token}`      | Revoke an existing agent enrollment token                                  |
+| `GET`    | `/api/v1/agents/tokens`                 | List credential metadata only; plaintext credentials are never listed (administrator session required) |
+| `POST`   | `/api/v1/agents/token`                  | Generate a single-use bootstrap token (administrator session and CSRF required) |
+| `POST`   | `/api/v1/agents/enroll`                 | Exchange bootstrap token for agent credential and server-assigned identity       |
+| `POST`   | `/api/v1/agents/renew`                  | Renew an agent credential using the current credential                           |
+| `DELETE` | `/api/v1/agents/tokens/{credential_id}` | Revoke a credential by opaque record ID (administrator session and CSRF required) |
 
 ---
 
@@ -299,16 +301,29 @@ npm run dev
 
 ### 5. Deploy & Run Agent on Endpoints
 
-```powershell
-# 1. Enroll the agent using a bootstrap token and the backend's HTTPS endpoint
-python -m agent.enroll --token <BOOTSTRAP_TOKEN> --backend https://<BACKEND_HOST>:8000
+In the dashboard, sign in as an administrator and create a bootstrap token under
+**Settings → Agent Credentials & Enrollment Tokens**. The token is shown only once,
+expires after 30 minutes, and can enroll only one agent. Do not log or share it.
+Enroll a local development agent over loopback HTTP, or use verified HTTPS for a
+remote endpoint:
 
-# 2. Install and start as an automatic OS background service
+```powershell
+# Enroll once; enrollment saves the permanent token and backend-assigned identity
+# in agent/.env. The tenant argument is not needed or trusted by the backend.
+python -m agent.enroll --token "<BOOTSTRAP_TOKEN>" --backend "http://localhost:8000"
+
+# For a remote endpoint, use the backend's verified HTTPS endpoint instead:
+python -m agent.enroll --token "<BOOTSTRAP_TOKEN>" --backend "https://<BACKEND_HOST>:8000"
+
+# Option A: run in the foreground
+python -m agent.main
+
+# Option B instead: install and start at boot (Linux systemd / Windows Task Scheduler)
 python -m agent.service install
 python -m agent.service start
 
-# 3. Check service status
-falsepython -m agent.service status
+# Check service status
+python -m agent.service status
 ```
 
 ---
@@ -344,6 +359,8 @@ python -m pytest worker/tests -v
 | -------------------------- | ---------------------------------------- | ------------------------------------------------------ |
 | `SIEM_BACKEND_URL`         | `http://127.0.0.1:8000/api/v1/telemetry` | Backend ingestion endpoint URL                         |
 | `SIEM_AGENT_TOKEN`         | `""`                                     | Provisioned agent token for authenticated ingestion    |
+| `SIEM_AGENT_ID`            | `""`                                     | Backend-assigned agent identity saved during enrollment |
+| `SIEM_TENANT_ID`           | `default`                                | Backend-assigned tenant identity saved during enrollment |
 | `SIEM_COLLECTION_INTERVAL` | `5`                                      | Polling and collection interval in seconds             |
 | `SIEM_BUFFER_DB_PATH`      | `.agent_buffer.db`                       | Local SQLite database file for offline buffering       |
 | `SIEM_BUFFER_MAX_EVENTS`   | `25000`                                  | Maximum number of pending events held in buffer        |
@@ -355,14 +372,16 @@ python -m pytest worker/tests -v
 | ------------------------- | ------------------------ | ---------------------------------------------------- |
 | `PORT`                    | `8000`                   | Backend API listen port                              |
 | `ENVIRONMENT`             | `development`            | Set to `production` for deployed environments       |
-| `AUTH_DB_PATH`            | `../data/sysmon_auth.db` | SQLite database for administrator accounts/sessions |
+| `AUTH_DB_PATH`            | `../data/sysmon_auth.db` | Protected SQLite database for administrator and agent identity/credential metadata |
 | `AUTH_SESSION_COOKIE_SECURE` | derived from `ENVIRONMENT` | Must be `true` in production                         |
 | `TLS_CERT_FILE`           | unset                    | Organization-provided certificate for direct HTTPS |
 | `TLS_KEY_FILE`            | unset                    | Matching private key; configure both TLS variables  |
+| `TLS_TERMINATED`           | `false`                  | Set `true` only when a trusted reverse proxy terminates HTTPS |
+| `DEFAULT_TENANT_ID`        | `default`                | Server-assigned tenant for new agent enrollments    |
 | `ALLOWED_ORIGINS`         | `*`                      | Comma-separated dashboard origins; set explicitly in production |
 | `KAFKA_BOOTSTRAP_SERVERS` | `localhost:29092`        | Kafka broker address                                 |
 | `KAFKA_TOPIC`             | `telemetry_data`         | Telemetry event topic                                |
-| `REDIS_URL`               | `redis://localhost:6379` | Redis connection URL for rate limiting & token store |
+| `REDIS_URL`               | `redis://localhost:6379` | Redis connection URL for rate limiting and other cache services |
 | `CLICKHOUSE_HOST`         | `localhost`              | ClickHouse server host                               |
 | `CLICKHOUSE_PORT`         | `8123`                   | ClickHouse HTTP interface port                       |
 | `CLICKHOUSE_USERNAME`     | `backend`                | ClickHouse user account                              |
@@ -376,14 +395,29 @@ The backend creates `data/sysmon_auth.db` on first use and enables SQLite WAL mo
 The first administrator is created through **Initial administrator setup** in the
 dashboard, but the setup request is accepted only from a loopback client. It is
 available once; there are no default credentials or public registration links.
-Administrator passwords use Argon2id, and only hashes of administrator session,
-CSRF, and agent tokens are persisted. Session cookies are `HttpOnly`, `SameSite=Strict`,
+Administrator passwords use Argon2id. Only hashes of administrator session,
+CSRF, bootstrap, and permanent agent tokens are persisted; plaintext credentials
+are returned only at issuance, enrollment, or the authenticated renewal response.
+Agent identities and credential metadata
+(including bootstrap tokens, expirations, revocation, and rotation overlap) are
+stored in the protected SQLite database; bootstrap tokens expire after 30 minutes
+and are single-use. The dashboard can view credential metadata but cannot retrieve
+an issued credential again. Agent IDs and tenant IDs are assigned by the backend;
+the enrollment tenant field is ignored, and telemetry identity fields must match
+the authenticated credential. Session cookies are `HttpOnly`, `SameSite=Strict`,
 and `Secure` in production. State-changing dashboard requests require a CSRF token.
 
 For production, set `ENVIRONMENT=production`, `ALLOWED_ORIGINS` to the dashboard's
 exact origin, and `AUTH_SESSION_COOKIE_SECURE=true`. Terminate HTTPS with your
 organization's certificate either directly using `TLS_CERT_FILE` and `TLS_KEY_FILE`,
 or at a trusted reverse proxy; do not expose the backend over plaintext HTTP.
+Production startup requires direct TLS certificate files or `TLS_TERMINATED=true`.
+Agent enrollment, telemetry, and renewal clients use verified HTTPS; plaintext HTTP
+is permitted only for loopback development. Rotated credentials overlap for a
+bounded recovery interval so an agent can retry after a lost renewal response.
+Revoking an agent credential disables that agent's current and overlapping
+credentials without deleting historical telemetry. Re-enrollment issues a new
+backend-generated agent identity.
 Set the dashboard's `VITE_API_URL` to the backend's HTTPS origin as well.
 Bind the local setup interface so that remote clients cannot reach it through a
 loopback-terminating proxy. The auth database is excluded from version control and
