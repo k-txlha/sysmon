@@ -5,7 +5,9 @@ import tempfile
 import uuid
 from contextlib import closing
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 from unittest import TestCase
 
 from fastapi.testclient import TestClient
@@ -171,6 +173,50 @@ class TestAdministratorAuthentication(TestCase):
         )
         self.assertEqual(old_login.status_code, 401)
         self.assertEqual(new_login.status_code, 200)
+
+    def test_expired_session_is_rejected(self):
+        registration = self.register_admin()
+        self.assertIn(AUTH_SESSION_COOKIE, registration.cookies)
+        expired_at = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+        with closing(sqlite3.connect(auth_service.database_path)) as connection:
+            connection.execute(
+                "UPDATE admin_sessions SET expires_at = ?",
+                (expired_at,),
+            )
+            connection.commit()
+
+        response = self.client.get("/api/v1/auth/me")
+        self.assertEqual(response.status_code, 401)
+
+    def test_local_recovery_changes_password_and_revokes_sessions(self):
+        self.register_admin()
+        from backend.auth_recovery import main as recovery_command
+
+        with (
+            patch("builtins.input", return_value="sysmon-admin"),
+            patch(
+                "backend.auth_recovery.getpass",
+                side_effect=[
+                    "Recovered-Secure-Password-2026!",
+                    "Recovered-Secure-Password-2026!",
+                ],
+            ),
+        ):
+            recovery_command()
+        self.assertEqual(self.client.get("/api/v1/auth/me").status_code, 401)
+        old_password = self.client.post(
+            "/api/v1/auth/login",
+            json={"username": "sysmon-admin", "password": PASSWORD},
+        )
+        recovered_password = self.client.post(
+            "/api/v1/auth/login",
+            json={
+                "username": "sysmon-admin",
+                "password": "Recovered-Secure-Password-2026!",
+            },
+        )
+        self.assertEqual(old_password.status_code, 401)
+        self.assertEqual(recovered_password.status_code, 200)
 
     def test_management_routes_require_admin(self):
         self.register_admin()
