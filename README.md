@@ -300,8 +300,8 @@ npm run dev
 ### 5. Deploy & Run Agent on Endpoints
 
 ```powershell
-# 1. Enroll the agent using a bootstrap token
-python -m agent.enroll --token <BOOTSTRAP_TOKEN> --backend http://<BACKEND_HOST>:8000
+# 1. Enroll the agent using a bootstrap token and the backend's HTTPS endpoint
+python -m agent.enroll --token <BOOTSTRAP_TOKEN> --backend https://<BACKEND_HOST>:8000
 
 # 2. Install and start as an automatic OS background service
 python -m agent.service install
@@ -354,6 +354,12 @@ python -m pytest worker/tests -v
 | Variable                  | Default                  | Description                                          |
 | ------------------------- | ------------------------ | ---------------------------------------------------- |
 | `PORT`                    | `8000`                   | Backend API listen port                              |
+| `ENVIRONMENT`             | `development`            | Set to `production` for deployed environments       |
+| `AUTH_DB_PATH`            | `../data/sysmon_auth.db` | SQLite database for administrator accounts/sessions |
+| `AUTH_SESSION_COOKIE_SECURE` | derived from `ENVIRONMENT` | Must be `true` in production                         |
+| `TLS_CERT_FILE`           | unset                    | Organization-provided certificate for direct HTTPS |
+| `TLS_KEY_FILE`            | unset                    | Matching private key; configure both TLS variables  |
+| `ALLOWED_ORIGINS`         | `*`                      | Comma-separated dashboard origins; set explicitly in production |
 | `KAFKA_BOOTSTRAP_SERVERS` | `localhost:29092`        | Kafka broker address                                 |
 | `KAFKA_TOPIC`             | `telemetry_data`         | Telemetry event topic                                |
 | `REDIS_URL`               | `redis://localhost:6379` | Redis connection URL for rate limiting & token store |
@@ -362,7 +368,30 @@ python -m pytest worker/tests -v
 | `CLICKHOUSE_USERNAME`     | `backend`                | ClickHouse user account                              |
 | `CLICKHOUSE_PASSWORD`     | `***`                    | ClickHouse password                                  |
 | `CLICKHOUSE_DB`           | `metrics`                | ClickHouse database name                             |
-| `REQUIRE_AGENT_AUTH`      | `false`                  | Enable/disable mandatory agent token authentication  |
+| `REQUIRE_AGENT_AUTH`      | `true`                   | Agent authentication is mandatory and cannot be disabled |
+
+### Administrator security
+
+The backend creates `data/sysmon_auth.db` on first use and enables SQLite WAL mode.
+The first administrator is created through **Initial administrator setup** in the
+dashboard, but the setup request is accepted only from a loopback client. It is
+available once; there are no default credentials or public registration links.
+Administrator passwords use Argon2id, and only hashes of administrator session,
+CSRF, and agent tokens are persisted. Session cookies are `HttpOnly`, `SameSite=Strict`,
+and `Secure` in production. State-changing dashboard requests require a CSRF token.
+
+For production, set `ENVIRONMENT=production`, `ALLOWED_ORIGINS` to the dashboard's
+exact origin, and `AUTH_SESSION_COOKIE_SECURE=true`. Terminate HTTPS with your
+organization's certificate either directly using `TLS_CERT_FILE` and `TLS_KEY_FILE`,
+or at a trusted reverse proxy; do not expose the backend over plaintext HTTP.
+Set the dashboard's `VITE_API_URL` to the backend's HTTPS origin as well.
+Bind the local setup interface so that remote clients cannot reach it through a
+loopback-terminating proxy. The auth database is excluded from version control and
+should be owned/readable only by the Sysmon service account.
+
+To recover an administrator account from the host operating system, run
+`python -m backend.auth_recovery` as the Sysmon service account. This sets a new
+password and revokes all current sessions; it does not retrieve the old password.
 
 ### `worker/.env`
 
