@@ -3,6 +3,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 
 from agent.utils import token_manager
 from agent.utils.token_manager import AgentTokenManager
@@ -38,8 +39,9 @@ def test_renewal_persists_replacement_before_switching_token(tmp_path: Path, mon
     assert delay > 0
     post.assert_called_once_with(
         "https://backend.example/api/v1/agents/renew",
-        headers={"X-Agent-Token": "old-token"},
+        headers={"Authorization": "Bearer old-token"},
         timeout=10.0,
+        verify=True,
     )
 
 
@@ -48,7 +50,7 @@ def test_persistence_failure_keeps_current_token(tmp_path: Path, monkeypatch):
     env_file.write_text("SIEM_AGENT_TOKEN=old-token\n", encoding="utf-8")
     manager = AgentTokenManager(
         token="old-token",
-        backend_url="http://backend/api/v1/telemetry",
+        backend_url="https://backend.example/api/v1/telemetry",
         token_file=env_file,
     )
     response = _renewal_response("new-token")
@@ -64,3 +66,21 @@ def test_persistence_failure_keeps_current_token(tmp_path: Path, monkeypatch):
 
     assert manager.current_token == "old-token"
     assert "SIEM_AGENT_TOKEN=old-token" in env_file.read_text(encoding="utf-8")
+
+
+def test_renewal_authentication_rejection_stops_renewal(tmp_path: Path):
+    manager = AgentTokenManager(
+        token="old-token",
+        backend_url="https://backend.example/api/v1/telemetry",
+        token_file=tmp_path / ".env",
+    )
+    unauthorized = requests.HTTPError(
+        "unauthorized",
+        response=MagicMock(status_code=401),
+    )
+    with patch(
+        "agent.utils.token_manager.requests.post",
+        side_effect=unauthorized,
+    ):
+        manager._renewal_loop()
+    assert manager.authentication_failed

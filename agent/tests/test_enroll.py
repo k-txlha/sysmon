@@ -30,14 +30,16 @@ def test_enroll_success():
     with patch("requests.post", return_value=mock_resp), patch("agent.enroll._save_to_env") as mock_save:
         res = enroll(
             bootstrap_token="sysmon_tok_bootstrap_valid",
-            backend_url="http://mock-backend:8000",
+            backend_url="https://mock-backend:8000",
         )
         assert res is not None
         assert res["agent_id"] == "test-agent-01"
         assert res["agent_token"] == "sysmon_agent_secret_token_123"
         mock_save.assert_called_once_with(
-            backend_url="http://mock-backend:8000/api/v1/telemetry",
+            backend_url="https://mock-backend:8000/api/v1/telemetry",
             agent_token="sysmon_agent_secret_token_123",
+            agent_id="test-agent-01",
+            tenant_id="default",
         )
 
 
@@ -49,9 +51,19 @@ def test_enroll_invalid_token():
     with patch("requests.post", return_value=mock_resp):
         res = enroll(
             bootstrap_token="sysmon_tok_invalid",
-            backend_url="http://mock-backend:8000",
+            backend_url="https://mock-backend:8000",
         )
         assert res is None
+
+
+def test_enroll_rejects_non_local_plain_http():
+    with patch("requests.post") as post:
+        result = enroll(
+            bootstrap_token="sysmon_tok_bootstrap_valid",
+            backend_url="http://backend.example:8000",
+        )
+    assert result is None
+    post.assert_not_called()
 
 
 def test_save_to_env():

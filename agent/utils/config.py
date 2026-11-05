@@ -23,6 +23,8 @@ class Config:
             "SIEM_BACKEND_URL", "http://127.0.0.1:8000/api/v1/telemetry"
         )
         self.AGENT_TOKEN = os.getenv("SIEM_AGENT_TOKEN", "")
+        self.AGENT_ID = os.getenv("SIEM_AGENT_ID", "")
+        self.TENANT_ID = os.getenv("SIEM_TENANT_ID", "default")
         self.COLLECTION_INTERVAL = int(os.getenv("SIEM_COLLECTION_INTERVAL", "5"))
         self.LOG_LEVEL = os.getenv("SIEM_LOG_LEVEL", "INFO")
         self.BUFFER_DB_PATH = os.getenv(

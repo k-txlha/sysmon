@@ -8,7 +8,9 @@ and server acknowledgment to guarantee zero silent telemetry loss.
 
 from __future__ import annotations
 
+import ipaddress
 from typing import Any, Dict, List, Optional, Union
+from urllib.parse import urlsplit
 
 import requests
 
@@ -21,6 +23,22 @@ logger = setup_logger("transport")
 
 # Singleton disk buffer instance
 _buffer_instance: Optional[LocalBoundedBuffer] = None
+
+
+class AgentAuthenticationError(RuntimeError):
+    """Raised when agent credentials are missing or rejected by the backend."""
+
+
+def _validate_backend_url() -> None:
+    parsed = urlsplit(settings.BACKEND_URL)
+    if parsed.scheme == "https":
+        return
+    try:
+        local_address = ipaddress.ip_address(parsed.hostname or "").is_loopback
+    except ValueError:
+        local_address = (parsed.hostname or "").lower() == "localhost"
+    if parsed.scheme != "http" or not local_address:
+        raise ValueError("Agent telemetry requires HTTPS with certificate verification.")
 
 
 def get_buffer() -> LocalBoundedBuffer:
@@ -41,9 +59,22 @@ def _get_headers() -> Dict[str, str]:
         "User-Agent": "SysmonAgent/1.0",
     }
     token = get_current_token()
-    if token:
-        headers["X-Agent-Token"] = token
+    if not token:
+        raise AgentAuthenticationError("Agent credential is not configured.")
+    headers["Authorization"] = f"Bearer {token}"
     return headers
+
+
+def _bind_enrolled_identity(events: List[Dict[str, Any]]) -> None:
+    agent_id = settings.AGENT_ID
+    tenant_id = settings.TENANT_ID
+    if not agent_id or not tenant_id:
+        raise AgentAuthenticationError(
+            "Backend-assigned agent and tenant identities are not configured."
+        )
+    for event in events:
+        event["agent_id"] = agent_id
+        event["tenant_id"] = tenant_id
 
 
 def send_batch_to_backend(events: List[Dict[str, Any]]) -> bool:
@@ -54,14 +85,17 @@ def send_batch_to_backend(events: List[Dict[str, Any]]) -> bool:
     if not events:
         return True
 
+    _bind_enrolled_identity(events)
     payload = {"events": events} if len(events) > 1 else events[0]
 
     try:
+        _validate_backend_url()
         response = requests.post(
             settings.BACKEND_URL,
             json=payload,
             headers=_get_headers(),
             timeout=15.0,
+            verify=True,
         )
 
         if response.status_code in [200, 202]:
@@ -73,16 +107,24 @@ def send_batch_to_backend(events: List[Dict[str, Any]]) -> bool:
             return False
 
         elif response.status_code in [401, 403]:
-            logger.critical(
-                f"Authentication failed ({response.status_code}): {response.text}. "
-                "Check SIEM_AGENT_TOKEN configuration."
+            try:
+                response_detail = response.json().get("detail", "")
+            except (ValueError, AttributeError):
+                response_detail = ""
+            detail = (
+                f" Backend response: {response_detail}"
+                if isinstance(response_detail, str) and response_detail
+                else ""
             )
-            return False
+            logger.critical(
+                f"Authentication failed ({response.status_code}); stopping telemetry transmission.{detail}"
+            )
+            raise AgentAuthenticationError(
+                f"Backend rejected telemetry ({response.status_code}).{detail}"
+            )
 
         else:
-            logger.error(
-                f"Backend rejected payload with status {response.status_code}: {response.text}"
-            )
+            logger.error(f"Backend rejected payload with status {response.status_code}.")
             return False
 
     except requests.exceptions.RequestException as e:

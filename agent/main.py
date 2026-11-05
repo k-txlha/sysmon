@@ -9,8 +9,13 @@ from agent.collectors.process import ProcessCollector
 from agent.utils.assembler import TelemetryAssembler
 from agent.utils.config import settings
 from agent.utils.logger import setup_logger
-from agent.utils.token_manager import start_token_renewal, stop_token_renewal
-from agent.utils.transport import get_buffer, ship_to_backend
+from agent.utils.token_manager import (
+    get_current_token,
+    has_authentication_failed,
+    start_token_renewal,
+    stop_token_renewal,
+)
+from agent.utils.transport import AgentAuthenticationError, get_buffer, ship_to_backend
 
 # 1. Detect Operating System
 OS_TYPE = platform.system().lower()  # returns 'linux', 'windows', or 'darwin'
@@ -59,16 +64,25 @@ class Agent:
 
     def run(self):
         """Main execution loop for continuous data collection and durable transmission."""
-        logger.info(f"Initializing Sysmon EDR Agent on [{OS_TYPE.upper()}] environment...")
-        logger.info(
-            f"Agent loop scheduled to run every {settings.COLLECTION_INTERVAL} seconds. "
-            f"Buffer: {settings.BUFFER_DB_PATH}"
-        )
-        print("-" * 60)
-
-        start_token_renewal()
         try:
+            if not get_current_token():
+                logger.critical(
+                    "Agent credential is not configured; authenticated operation is disabled."
+                )
+                raise AgentAuthenticationError("Agent credential is not configured.")
+            logger.info(f"Initializing Sysmon EDR Agent on [{OS_TYPE.upper()}] environment...")
+            logger.info(
+                f"Agent loop scheduled to run every {settings.COLLECTION_INTERVAL} seconds. "
+                f"Buffer: {settings.BUFFER_DB_PATH}"
+            )
+            print("-" * 60)
+
+            start_token_renewal()
             while True:
+                if has_authentication_failed():
+                    raise AgentAuthenticationError(
+                        "Backend rejected the agent credential; stopping the agent."
+                    )
                 envelopes = self.collect_envelopes()
                 if envelopes:
                     ship_to_backend(envelopes)

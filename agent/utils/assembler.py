@@ -27,6 +27,7 @@ from agent.collectors.base import BaseOSCollector
 from agent.collectors.common import SystemCollector
 from agent.collectors.process import ProcessCollector
 from agent.models.envelope import EventEnvelope, SeverityLevel, AgentHealthTelemetry
+from agent.utils.config import settings
 from agent.utils.logger import setup_logger
 
 logger = setup_logger("assembler")
@@ -54,14 +55,14 @@ class TelemetryAssembler:
         os_collector: BaseOSCollector,
         process_collector: Optional[ProcessCollector] = None,
         agent_id: Optional[str] = None,
-        tenant_id: str = "default",
+        tenant_id: Optional[str] = None,
     ) -> None:
         self.common_collector = common_collector
         self.os_collector = os_collector
         self.process_collector = process_collector or ProcessCollector()
         self.host_id = socket.gethostname()
-        self.agent_id = agent_id or self.host_id
-        self.tenant_id = tenant_id
+        self.agent_id = agent_id or settings.AGENT_ID or self.host_id
+        self.tenant_id = tenant_id or settings.TENANT_ID
         self.source = f"{platform.system().lower()}_agent"
         self._sequence = 0
         self._start_time = time.time()

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import random
+import subprocess
 import tempfile
 import threading
 from datetime import datetime, timedelta, timezone
@@ -26,11 +27,17 @@ def persist_agent_configuration(
     token_file: Path,
     agent_token: str,
     backend_url: Optional[str] = None,
+    agent_id: Optional[str] = None,
+    tenant_id: Optional[str] = None,
 ) -> None:
     """Atomically persist updated agent credentials in the existing env file."""
     values = {"SIEM_AGENT_TOKEN": agent_token}
     if backend_url is not None:
         values["SIEM_BACKEND_URL"] = backend_url
+    if agent_id is not None:
+        values["SIEM_AGENT_ID"] = agent_id
+    if tenant_id is not None:
+        values["SIEM_TENANT_ID"] = tenant_id
 
     existing_lines = (
         token_file.read_text(encoding="utf-8").splitlines()
@@ -67,8 +74,32 @@ def persist_agent_configuration(
             temporary_file.write("\n".join(updated_lines) + "\n")
             temporary_file.flush()
             os.fsync(temporary_file.fileno())
+        if temporary_path is None:
+            raise OSError("Temporary credential file was not created.")
+        if os.name == "nt":
+            identity = subprocess.run(
+                ["whoami"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            subprocess.run(
+                [
+                    "icacls",
+                    temporary_path,
+                    "/inheritance:r",
+                    "/grant:r",
+                    f"{identity}:(F)",
+                    "SYSTEM:(F)",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        else:
+            os.chmod(temporary_path, 0o600)
         os.replace(temporary_path, token_file)
-    except OSError:
+    except (OSError, subprocess.SubprocessError):
         if temporary_path and os.path.exists(temporary_path):
             os.unlink(temporary_path)
         raise
@@ -88,12 +119,17 @@ class AgentTokenManager:
         self._token_file = token_file
         self._lock = threading.RLock()
         self._stop_event = threading.Event()
+        self._authentication_failed = threading.Event()
         self._thread: Optional[threading.Thread] = None
 
     @property
     def current_token(self) -> str:
         with self._lock:
             return self._token
+
+    @property
+    def authentication_failed(self) -> bool:
+        return self._authentication_failed.is_set()
 
     def start(self) -> None:
         with self._lock:
@@ -103,6 +139,7 @@ class AgentTokenManager:
             if self._thread and self._thread.is_alive():
                 return
             self._stop_event.clear()
+            self._authentication_failed.clear()
             self._thread = threading.Thread(
                 target=self._renewal_loop,
                 name="agent-token-renewal",
@@ -134,10 +171,20 @@ class AgentTokenManager:
 
     def _renew_once(self) -> float:
         token = self.current_token
+        renewal_url = self._renewal_url()
+        parsed_url = urlsplit(renewal_url)
+        local_http = (
+            parsed_url.scheme == "http"
+            and (parsed_url.hostname or "").lower()
+            in ("localhost", "127.0.0.1", "::1")
+        )
+        if parsed_url.scheme != "https" and not local_http:
+            raise ValueError("Agent credential renewal requires HTTPS.")
         response = requests.post(
-            self._renewal_url(),
-            headers={"X-Agent-Token": token},
+            renewal_url,
+            headers={"Authorization": f"Bearer {token}"},
             timeout=10.0,
+            verify=True,
         )
         response.raise_for_status()
         result = response.json()
@@ -166,7 +213,29 @@ class AgentTokenManager:
             try:
                 delay = self._renew_once()
                 retry_count = 0
-            except (requests.RequestException, ValueError, OSError) as exc:
+            except requests.HTTPError as exc:
+                response = exc.response
+                if response is not None and response.status_code in (401, 403):
+                    self._authentication_failed.set()
+                    logger.critical(
+                        f"Agent credential was rejected ({response.status_code}); stopping renewal."
+                    )
+                    return
+                retry_count += 1
+                backoff = min(
+                    RETRY_BASE_SECONDS * (2 ** (retry_count - 1)),
+                    RETRY_MAX_SECONDS,
+                )
+                delay = random.uniform(backoff * 0.8, backoff * 1.2)
+                logger.warning(
+                    f"Agent token renewal failed; retrying in {delay:.1f}s: {exc}"
+                )
+            except (
+                requests.RequestException,
+                ValueError,
+                OSError,
+                subprocess.SubprocessError,
+            ) as exc:
                 retry_count += 1
                 backoff = min(
                     RETRY_BASE_SECONDS * (2 ** (retry_count - 1)),
@@ -189,3 +258,7 @@ def stop_token_renewal() -> None:
 
 def get_current_token() -> str:
     return _token_manager.current_token
+
+
+def has_authentication_failed() -> bool:
+    return _token_manager.authentication_failed
