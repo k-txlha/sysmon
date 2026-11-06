@@ -191,16 +191,17 @@ Every event transmitted through Sysmon adheres to the strict EDR Event Envelope 
 
 ### 2. 🛡️ Agent Resilience, Local Disk Buffer & Service Management
 
-- **Local Bounded Disk Buffer (`agent/utils/buffer.py`)**: Events are staged in an SQLite WAL-mode FIFO queue. If the backend is unreachable or rate-limits with 429, events remain safely stored on disk and drain automatically upon reconnection.
+- **Local Bounded Disk Buffer (`agent/utils/buffer.py`)**: Events are committed to an SQLite WAL queue before delivery. The agent authenticates through the credential-renewal endpoint before sending; during a network outage it continues collection and persists events. Delivery uses batches, exponential backoff with jitter, and honors HTTP `Retry-After`. A batch is removed only when the backend returns an `accepted` acknowledgement containing the exact event IDs.
+- **Bounded retention and overflow**: `SIEM_BUFFER_MAX_EVENTS` and `SIEM_BUFFER_MAX_BYTES` bound pending event payloads, and `SIEM_BUFFER_RETENTION_SECONDS` sets their maximum age (7 days by default). At capacity, the documented policy evicts the oldest unacknowledged events to admit a new event; an event larger than the byte limit is rejected. Expiry and overflow increment the dropped counter and emit warnings. Protect the SQLite database and its WAL files with owner-only permissions; use OS full-disk encryption (for example BitLocker or LUKS) when local-disk compromise is in scope. The agent does not implement application-level database encryption.
 - **OS Service Management (`agent/service.py`)**: Install, start, stop, and query the agent at boot (Linux `systemd` unit or Windows Task Scheduler task).
 - **Automated Bootstrap Enrollment (`agent/enroll.py`)**: Agent exchanges a short-lived, single-use bootstrap token for a permanent credential and backend-assigned agent/tenant identity via `POST /api/v1/agents/enroll`; enrollment saves these values to the local agent configuration.
 - **Agent Health Diagnostics (`agent.health`)**: Automatically captures and transmits agent process memory (RSS MB), process CPU usage, local queue depth, and dropped event counters, persisted in ClickHouse `AGENT_HEALTH` table.
 
 ### 3. ⚡ Ingestion Gateway & Security Analytics API (`backend/`)
 
-- **Authenticated Ingestion**: Requires an active agent credential, derives identity from the SQLite credential registry, and rejects mismatched `agent_id` or `tenant_id` values. Remote agent enrollment, telemetry, and renewal require verified HTTPS; loopback HTTP is allowed only for development.
+- **Authenticated Ingestion**: Requires an active agent credential, derives identity from the SQLite credential registry, and rejects mismatched `agent_id` or `tenant_id` values. An unreachable backend is treated as temporary and does not invalidate local credentials or queued events; explicit 401/403 responses disable transmission until authentication succeeds again. Remote agent enrollment, telemetry, and renewal require verified HTTPS; loopback HTTP is allowed only for development.
 - **Strict Ingestion**: Validates incoming payloads against `EventEnvelope` and `IngestionBatchRequest` schemas; rejects malformed inputs with `HTTP 422`.
-- **Concurrent Batch Streaming**: High-throughput non-blocking streaming to Kafka topics using `asyncio.gather`.
+- **Durable Batch Acknowledgement**: The gateway acknowledges only after Kafka confirms the records with `acks=all`. Backend receipts and per-agent event IDs make retrying an acknowledged batch idempotent; Kafka records are keyed by `agent_id:event_id`.
 - **Server-Side Timestamping**: Adds `received_at` UTC timestamps and records live heartbeats in Redis.
 - **Analytical Query Engine**: `ClickHouseQueryService` provides aggregated KPI statistics, device history, agent health diagnostics, and threat analytics.
 
@@ -364,7 +365,8 @@ python -m pytest worker/tests -v
 | `SIEM_COLLECTION_INTERVAL` | `5`                                      | Polling and collection interval in seconds             |
 | `SIEM_BUFFER_DB_PATH`      | `.agent_buffer.db`                       | Local SQLite database file for offline buffering       |
 | `SIEM_BUFFER_MAX_EVENTS`   | `25000`                                  | Maximum number of pending events held in buffer        |
-| `SIEM_BUFFER_MAX_BYTES`    | `52428800` (50MB)                        | Disk quota limit for local buffer before FIFO eviction |
+| `SIEM_BUFFER_MAX_BYTES`    | `52428800` (50MB)                        | Maximum serialized pending-event payload bytes         |
+| `SIEM_BUFFER_RETENTION_SECONDS` | `604800` (7 days)                   | Maximum age for unacknowledged events before explicit expiry |
 
 ### `backend/.env`
 
@@ -422,6 +424,15 @@ Set the dashboard's `VITE_API_URL` to the backend's HTTPS origin as well.
 Bind the local setup interface so that remote clients cannot reach it through a
 loopback-terminating proxy. The auth database is excluded from version control and
 should be owned/readable only by the Sysmon service account.
+
+Telemetry acknowledgement means that Kafka has returned a successful record
+delivery result (producer `acks=all`) and the backend has persisted the event IDs
+in its receipt ledger. If Kafka is unavailable or rejects a record, the endpoint
+returns a retryable error and does not acknowledge the batch. The agent retains
+unacknowledged events until a valid acknowledgement or its configured local
+retention/overflow policy explicitly expires or evicts them. Configure Kafka
+replication and `min.insync.replicas` to match the deployment's durability
+requirements; the broker's successful acknowledgement is the durability boundary.
 
 To recover an administrator account from the host operating system, run
 `python -m backend.auth_recovery` as the Sysmon service account. This sets a new
