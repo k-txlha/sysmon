@@ -340,6 +340,7 @@ class TestBackendAPI(unittest.TestCase):
             json={"description": "Test Agent Token"},
         )
         self.assertEqual(create_res.status_code, 201)
+        self.assertEqual(create_res.headers["cache-control"], "no-store")
         token_data = create_res.json()
         self.assertIn("token", token_data)
         token_str = token_data["token"]
@@ -388,6 +389,7 @@ class TestBackendAPI(unittest.TestCase):
             },
         )
         self.assertEqual(enroll_res.status_code, 200)
+        self.assertEqual(enroll_res.headers["cache-control"], "no-store")
         data = enroll_res.json()
         self.assertEqual(data["status"], "enrolled")
         self.assertNotEqual(data["agent_id"], hostname)
@@ -481,6 +483,7 @@ class TestBackendAPI(unittest.TestCase):
             headers={"X-Agent-Token": old_token},
         )
         self.assertEqual(not_due.status_code, 200)
+        self.assertEqual(not_due.headers["cache-control"], "no-store")
         self.assertFalse(not_due.json()["renewed"])
         self.assertEqual(not_due.json()["agent_token"], old_token)
 
@@ -598,6 +601,10 @@ class TestBackendAPI(unittest.TestCase):
             data = response.json()
             self.assertEqual(data["status"], "accepted")
             self.assertEqual(data["ingested_count"], 1)
+            self.assertEqual(
+                data["accepted_event_ids"],
+                ["11111111-2222-3333-4444-555555555555"],
+            )
             self.assertIn("received_at", data)
             self.assertEqual(
                 stream.call_args.args[1][0]["agent_id"],
@@ -647,6 +654,70 @@ class TestBackendAPI(unittest.TestCase):
                 {event["agent_id"] for event in stream.call_args.args[1]},
                 {agent_service._load_token(agent_token)["agent_id"]},
             )
+
+    def test_telemetry_duplicate_delivery_is_acknowledged_without_republishing(self):
+        agent_token = self.create_agent_credential()
+        identity = agent_service._load_token(agent_token)
+        payload = {
+            "event_id": "deduplicated-event-1",
+            "host_id": "TEST-HOST",
+            "agent_id": identity["agent_id"],
+            "tenant_id": identity["tenant_id"],
+            "event_type": "telemetry.snapshot",
+            "observed_at": "2026-09-16T14:30:00.000Z",
+            "source": "windows_agent",
+            "data": {},
+        }
+        with patch(
+            "backend.services.producer.kafka_service.stream_batch",
+            return_value=None,
+        ) as stream:
+            first = self.client.post(
+                "/api/v1/telemetry",
+                json=payload,
+                headers={"Authorization": "Bearer " + agent_token},
+            )
+            duplicate = self.client.post(
+                "/api/v1/telemetry",
+                json=payload,
+                headers={"Authorization": "Bearer " + agent_token},
+            )
+
+        self.assertEqual(first.status_code, 202)
+        self.assertEqual(duplicate.status_code, 202)
+        self.assertEqual(duplicate.json()["accepted_event_ids"], [payload["event_id"]])
+        stream.assert_called_once()
+
+    def test_telemetry_is_not_acknowledged_when_kafka_rejects_batch(self):
+        agent_token = self.create_agent_credential()
+        identity = agent_service._load_token(agent_token)
+        payload = {
+            "event_id": "not-accepted-yet",
+            "host_id": "TEST-HOST",
+            "agent_id": identity["agent_id"],
+            "tenant_id": identity["tenant_id"],
+            "event_type": "telemetry.snapshot",
+            "observed_at": "2026-09-16T14:30:00.000Z",
+            "source": "windows_agent",
+            "data": {},
+        }
+        with patch(
+            "backend.services.producer.kafka_service.stream_batch",
+            side_effect=[RuntimeError("broker unavailable"), None],
+        ):
+            rejected = self.client.post(
+                "/api/v1/telemetry",
+                json=payload,
+                headers={"Authorization": "Bearer " + agent_token},
+            )
+            retried = self.client.post(
+                "/api/v1/telemetry",
+                json=payload,
+                headers={"Authorization": "Bearer " + agent_token},
+            )
+
+        self.assertEqual(rejected.status_code, 503)
+        self.assertEqual(retried.status_code, 202)
 
     def test_telemetry_rejects_conflicting_agent_and_tenant_identity(self):
         agent_token = self.create_agent_credential()

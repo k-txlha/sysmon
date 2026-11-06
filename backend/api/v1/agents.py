@@ -13,7 +13,7 @@ from __future__ import annotations
 from uuid import UUID
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
 
 from backend.services.agent_service import agent_service
@@ -68,14 +68,22 @@ async def list_agent_tokens():
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(require_admin)],
 )
-async def create_agent_token(payload: GenerateTokenRequest = GenerateTokenRequest()):
+async def create_agent_token(
+    response: Response,
+    payload: GenerateTokenRequest = GenerateTokenRequest(),
+):
     """Provision a new secure enrollment token for an agent."""
+    response.headers["Cache-Control"] = "no-store"
     token_data = await agent_service.generate_token(description=payload.description)
     return token_data
 
 
 @router.post("/enroll", status_code=status.HTTP_200_OK)
-async def enroll_agent(payload: AgentEnrollRequest, request: Request):
+async def enroll_agent(
+    payload: AgentEnrollRequest,
+    request: Request,
+    response: Response,
+):
     """
     Enroll an agent endpoint using a valid bootstrap token.
     Returns provisioned agent credentials (agent_id, tenant_id, agent_token).
@@ -86,6 +94,7 @@ async def enroll_agent(payload: AgentEnrollRequest, request: Request):
             detail="Agent enrollment requires HTTPS with certificate verification.",
         )
 
+    response.headers["Cache-Control"] = "no-store"
     enrollment = await agent_service.enroll_agent(
         bootstrap_token=payload.bootstrap_token,
         hostname=payload.hostname,
@@ -114,6 +123,7 @@ async def enroll_agent(payload: AgentEnrollRequest, request: Request):
 @router.post("/renew", status_code=status.HTTP_200_OK)
 async def renew_agent_token(
     request: Request,
+    response: Response,
     x_agent_token: Optional[str] = Header(default=None, alias="X-Agent-Token"),
     authorization: Optional[str] = Header(default=None),
 ):
@@ -123,6 +133,7 @@ async def renew_agent_token(
             status_code=status.HTTP_426_UPGRADE_REQUIRED,
             detail="Agent credential renewal requires HTTPS.",
         )
+    response.headers["Cache-Control"] = "no-store"
     bearer_token = None
     if authorization:
         scheme, separator, value = authorization.partition(" ")

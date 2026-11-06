@@ -123,6 +123,12 @@ async def receive_telemetry(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="No valid event envelopes found in request.",
         )
+    event_ids = [envelope.event_id for envelope in envelopes]
+    if len(set(event_ids)) != len(event_ids):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="A telemetry batch cannot contain duplicate event IDs.",
+        )
 
     # Stamp server receipt time and stream batch to Kafka
     unique_agents = set()
@@ -145,12 +151,29 @@ async def receive_telemetry(
         raw_envelopes.append(env.model_dump(mode="json"))
 
     try:
-        await kafka_service.stream_batch(settings.KAFKA_TOPIC, raw_envelopes)
+        with agent_service.telemetry_receipt_transaction(
+            authenticated_identity["agent_id"], event_ids
+        ) as (accepted_before, receipt_connection):
+            new_envelopes = [
+                envelope
+                for envelope in raw_envelopes
+                if envelope["event_id"] not in accepted_before
+            ]
+            if new_envelopes:
+                await kafka_service.stream_batch(settings.KAFKA_TOPIC, new_envelopes)
+                agent_service.record_accepted_events(
+                    authenticated_identity["agent_id"],
+                    [envelope["event_id"] for envelope in new_envelopes],
+                    connection=receipt_connection,
+                )
     except Exception as e:
-        logger.error(f"Failed to stream envelope batch to Kafka: {e}")
+        logger.error(
+            "Failed to durably accept telemetry batch: %s",
+            type(e).__name__,
+        )
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Pipeline ingestion failure.",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Telemetry was not durably accepted; retry the batch.",
         )
 
     # Record heartbeats for all distinct agents in this batch
@@ -161,5 +184,6 @@ async def receive_telemetry(
     return {
         "status": "accepted",
         "ingested_count": len(envelopes),
+        "accepted_event_ids": event_ids,
         "received_at": received_at_ts,
     }

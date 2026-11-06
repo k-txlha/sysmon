@@ -15,7 +15,8 @@ class KafkaProducerService:
     async def start_service(self):
         self.producer = AIOKafkaProducer(
             bootstrap_servers=settings.KAFKA_BOOTSTRAP_SERVERS,
-            acks=1,
+            acks="all",
+            enable_idempotence=True,
             compression_type="gzip",
             max_batch_size=65536,
             linger_ms=10,
@@ -33,19 +34,31 @@ class KafkaProducerService:
             raise RuntimeError("Kafka producer is not initialized")
 
         payload_bytes = json.dumps(data).encode("utf-8")
-        await self.producer.send(topic, payload_bytes)
+        await self.producer.send_and_wait(topic, payload_bytes)
 
     async def stream_batch(self, topic: str, batch: list):
-        """Asynchronously streams a batch of envelopes to Kafka concurrently."""
+        """Wait until every event has been acknowledged by Kafka."""
         if not self.producer:
             raise RuntimeError("Kafka producer is not initialized")
         if not batch:
             return
 
-        tasks = [
-            self.producer.send(topic, json.dumps(item).encode("utf-8"))
-            for item in batch
-        ]
+        tasks = []
+        for item in batch:
+            agent_id = item.get("agent_id")
+            event_id = item.get("event_id")
+            if not isinstance(agent_id, str) or not agent_id:
+                raise ValueError("Kafka telemetry records require an agent_id.")
+            if not isinstance(event_id, str) or not event_id:
+                raise ValueError("Kafka telemetry records require an event_id.")
+            tasks.append(
+                self.producer.send_and_wait(
+                    topic,
+                    json.dumps(item).encode("utf-8"),
+                    key=f"{agent_id}:{event_id}".encode("utf-8"),
+                )
+            )
+        # Stable Kafka keys let downstream consumers recognize duplicate event IDs.
         await asyncio.gather(*tasks)
 
 

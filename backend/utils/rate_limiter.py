@@ -91,6 +91,7 @@ class RateLimiter:
                 if not allowed:
                     raise HTTPException(
                         status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                        headers={"Retry-After": str(self.window_seconds)},
                         detail={
                             "error": "Too Many Requests",
                             "message": f"Rate limit exceeded. Maximum {self.requests_limit} requests per {self.window_seconds} seconds allowed.",
@@ -109,8 +110,13 @@ class RateLimiter:
             timestamps.popleft()
 
         if len(timestamps) >= self.requests_limit:
+            retry_after = max(
+                1,
+                int(timestamps[0] + self.window_seconds - now + 0.999),
+            )
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                headers={"Retry-After": str(retry_after)},
                 detail={
                     "error": "Too Many Requests",
                     "message": f"Rate limit exceeded. Maximum {self.requests_limit} requests per {self.window_seconds} seconds allowed.",

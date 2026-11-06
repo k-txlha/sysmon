@@ -10,7 +10,7 @@ import time
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Generator, List, Optional
+from typing import Any, Dict, Generator, List, Optional, Tuple
 
 from backend.config.settings import settings
 
@@ -66,6 +66,12 @@ class AgentService:
                         ON agent_credentials(agent_id);
                     CREATE INDEX IF NOT EXISTS idx_agent_credentials_expiration
                         ON agent_credentials(expires_at);
+                    CREATE TABLE IF NOT EXISTS telemetry_receipts (
+                        agent_id TEXT NOT NULL,
+                        event_id TEXT NOT NULL,
+                        accepted_at TEXT NOT NULL,
+                        PRIMARY KEY (agent_id, event_id)
+                    );
                     """
                 )
                 agent_columns = {
@@ -87,6 +93,63 @@ class AgentService:
             yield connection
         finally:
             connection.close()
+
+    @contextmanager
+    def telemetry_receipt_transaction(
+        self, agent_id: str, event_ids: List[str]
+    ) -> Generator[Tuple[set[str], sqlite3.Connection], None, None]:
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                placeholders = ",".join("?" for _ in event_ids)
+                rows = (
+                    connection.execute(
+                        f"""
+                        SELECT event_id FROM telemetry_receipts
+                        WHERE agent_id = ? AND event_id IN ({placeholders})
+                        """,
+                        [agent_id, *event_ids],
+                    ).fetchall()
+                    if event_ids
+                    else []
+                )
+                yield {row["event_id"] for row in rows}, connection
+                connection.commit()
+            except BaseException:
+                connection.rollback()
+                raise
+
+    def record_accepted_events(
+        self,
+        agent_id: str,
+        event_ids: List[str],
+        connection: Optional[sqlite3.Connection] = None,
+    ) -> None:
+        if not event_ids:
+            return
+        accepted_at = self._as_iso(self._utc_now())
+        entries = [(agent_id, event_id, accepted_at) for event_id in event_ids]
+        if connection is not None:
+            connection.executemany(
+                """
+                INSERT OR IGNORE INTO telemetry_receipts
+                    (agent_id, event_id, accepted_at)
+                VALUES (?, ?, ?)
+                """,
+                entries,
+            )
+            return
+        with self._connect() as own_connection:
+            own_connection.execute("BEGIN IMMEDIATE")
+            own_connection.executemany(
+                """
+                INSERT OR IGNORE INTO telemetry_receipts
+                    (agent_id, event_id, accepted_at)
+                VALUES (?, ?, ?)
+                """,
+                entries,
+            )
+            own_connection.commit()
 
     @staticmethod
     def _token_key(token_str: str) -> str:
