@@ -11,7 +11,6 @@ from agent.utils.config import settings
 from agent.utils.logger import setup_logger
 from agent.utils.token_manager import (
     get_current_token,
-    has_authentication_failed,
     start_token_renewal,
     stop_token_renewal,
 )
@@ -79,10 +78,6 @@ class Agent:
 
             start_token_renewal()
             while True:
-                if has_authentication_failed():
-                    raise AgentAuthenticationError(
-                        "Backend rejected the agent credential; stopping the agent."
-                    )
                 envelopes = self.collect_envelopes()
                 if envelopes:
                     ship_to_backend(envelopes)

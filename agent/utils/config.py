@@ -33,7 +33,16 @@ class Config:
         self.BUFFER_MAX_EVENTS = int(os.getenv("SIEM_BUFFER_MAX_EVENTS", "25000"))
         self.BUFFER_MAX_BYTES = int(
             os.getenv("SIEM_BUFFER_MAX_BYTES", str(50 * 1024 * 1024))
-        )  # 50MB default
+        )
+        self.BUFFER_RETENTION_SECONDS = int(
+            os.getenv("SIEM_BUFFER_RETENTION_SECONDS", str(7 * 24 * 60 * 60))
+        )
+        if self.BUFFER_MAX_EVENTS < 1:
+            raise ValueError("SIEM_BUFFER_MAX_EVENTS must be greater than zero.")
+        if self.BUFFER_MAX_BYTES < 1:
+            raise ValueError("SIEM_BUFFER_MAX_BYTES must be greater than zero.")
+        if self.BUFFER_RETENTION_SECONDS < 1:
+            raise ValueError("SIEM_BUFFER_RETENTION_SECONDS must be greater than zero.")
 
 
 settings = Config()

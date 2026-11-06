@@ -16,6 +16,7 @@ import requests
 
 from agent.utils.config import ENV_FILE_PATH, settings
 from agent.utils.logger import setup_logger
+from agent.utils.retry import retry_after_seconds
 
 logger = setup_logger("token_manager")
 RENEWAL_MARGIN = timedelta(minutes=5)
@@ -119,7 +120,9 @@ class AgentTokenManager:
         self._token_file = token_file
         self._lock = threading.RLock()
         self._stop_event = threading.Event()
+        self._wake_event = threading.Event()
         self._authentication_failed = threading.Event()
+        self._authenticated = threading.Event()
         self._thread: Optional[threading.Thread] = None
 
     @property
@@ -131,6 +134,15 @@ class AgentTokenManager:
     def authentication_failed(self) -> bool:
         return self._authentication_failed.is_set()
 
+    @property
+    def authenticated(self) -> bool:
+        return self._authenticated.is_set() and not self._authentication_failed.is_set()
+
+    def report_authentication_failure(self) -> None:
+        self._authenticated.clear()
+        self._authentication_failed.set()
+        self._wake_event.set()
+
     def start(self) -> None:
         with self._lock:
             if not self._token:
@@ -139,7 +151,9 @@ class AgentTokenManager:
             if self._thread and self._thread.is_alive():
                 return
             self._stop_event.clear()
+            self._wake_event.clear()
             self._authentication_failed.clear()
+            self._authenticated.clear()
             self._thread = threading.Thread(
                 target=self._renewal_loop,
                 name="agent-token-renewal",
@@ -149,6 +163,7 @@ class AgentTokenManager:
 
     def stop(self) -> None:
         self._stop_event.set()
+        self._wake_event.set()
         thread = self._thread
         if thread and thread.is_alive():
             thread.join(timeout=10)
@@ -188,13 +203,21 @@ class AgentTokenManager:
         )
         response.raise_for_status()
         result = response.json()
+        if not isinstance(result, dict):
+            raise ValueError("Token renewal response must be a JSON object.")
         new_token = result.get("agent_token")
         expires_at = result.get("expires_at")
         if not isinstance(new_token, str) or not new_token:
             raise ValueError("Token renewal response did not contain an agent_token.")
+        if settings.AGENT_ID and result.get("agent_id") != settings.AGENT_ID:
+            raise ValueError("Token renewal response agent identity does not match enrollment.")
+        if settings.TENANT_ID and result.get("tenant_id") != settings.TENANT_ID:
+            raise ValueError("Token renewal response tenant identity does not match enrollment.")
 
         if new_token != token:
             self._persist_replacement(new_token)
+        self._authentication_failed.clear()
+        self._authenticated.set()
 
         if isinstance(expires_at, str):
             expiration = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
@@ -209,26 +232,42 @@ class AgentTokenManager:
     def _renewal_loop(self) -> None:
         retry_count = 0
         delay = 0.0
-        while not self._stop_event.wait(delay):
+        while not self._stop_event.is_set():
+            self._wake_event.wait(delay)
+            self._wake_event.clear()
+            if self._stop_event.is_set():
+                return
             try:
                 delay = self._renew_once()
                 retry_count = 0
             except requests.HTTPError as exc:
                 response = exc.response
                 if response is not None and response.status_code in (401, 403):
+                    self._authenticated.clear()
                     self._authentication_failed.set()
                     logger.critical(
-                        f"Agent credential was rejected ({response.status_code}); stopping renewal."
+                        "Agent credential was rejected (%s); authenticated transmission "
+                        "is disabled while renewal retries continue.",
+                        response.status_code,
                     )
-                    return
                 retry_count += 1
                 backoff = min(
                     RETRY_BASE_SECONDS * (2 ** (retry_count - 1)),
                     RETRY_MAX_SECONDS,
                 )
-                delay = random.uniform(backoff * 0.8, backoff * 1.2)
+                retry_after = (
+                    retry_after_seconds(response.headers.get("Retry-After"))
+                    if response is not None and response.headers
+                    else None
+                )
+                delay = max(
+                    random.uniform(backoff * 0.8, backoff * 1.2),
+                    retry_after or 0.0,
+                )
                 logger.warning(
-                    f"Agent token renewal failed; retrying in {delay:.1f}s: {exc}"
+                    "Agent token renewal failed with HTTP %s; retrying in %.1fs.",
+                    response.status_code if response is not None else "error",
+                    delay,
                 )
             except (
                 requests.RequestException,
@@ -242,7 +281,11 @@ class AgentTokenManager:
                     RETRY_MAX_SECONDS,
                 )
                 delay = random.uniform(backoff * 0.8, backoff * 1.2)
-                logger.warning(f"Agent token renewal failed; retrying in {delay:.1f}s: {exc}")
+                logger.warning(
+                    "Agent token renewal failed with %s; retrying in %.1fs.",
+                    type(exc).__name__,
+                    delay,
+                )
 
 
 _token_manager = AgentTokenManager()
@@ -262,3 +305,11 @@ def get_current_token() -> str:
 
 def has_authentication_failed() -> bool:
     return _token_manager.authentication_failed
+
+
+def is_authenticated() -> bool:
+    return _token_manager.authenticated
+
+
+def report_authentication_failure() -> None:
+    _token_manager.report_authentication_failure()

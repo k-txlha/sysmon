@@ -2,8 +2,11 @@
 Tests for Agent LocalBoundedBuffer (Offline Queuing & Resilience).
 """
 
+import json
 import os
+import stat
 import tempfile
+import time
 import pytest
 
 from agent.utils.buffer import LocalBoundedBuffer
@@ -66,6 +69,80 @@ def test_capacity_eviction_and_dropped_counter(temp_buffer):
     # Should not exceed capacity, should evict oldest
     assert temp_buffer.get_depth() <= 10
     assert temp_buffer.get_dropped_count() > 0
+    queued = [event["seq"] for _, event in temp_buffer.peek_batch(batch_size=20)]
+    assert queued == list(range(5, 15))
+
+
+def test_duplicate_event_id_is_idempotent(temp_buffer):
+    assert temp_buffer.push({"event_id": "same-id", "value": "original"})
+    assert temp_buffer.push({"event_id": "same-id", "value": "replacement"})
+    batch = temp_buffer.peek_batch()
+    assert len(batch) == 1
+    assert batch[0][1]["value"] == "original"
+
+
+def test_buffer_persists_across_restart(tmp_path):
+    db_path = str(tmp_path / "restart.db")
+    first = LocalBoundedBuffer(db_path=db_path)
+    assert first.push({"event_id": "persisted"})
+    first.close()
+
+    second = LocalBoundedBuffer(db_path=db_path)
+    try:
+        assert [event["event_id"] for _, event in second.peek_batch()] == ["persisted"]
+    finally:
+        second.close()
+
+
+def test_legacy_pending_event_receives_stable_id_before_delivery(tmp_path):
+    buffer = LocalBoundedBuffer(db_path=str(tmp_path / "legacy.db"))
+    try:
+        buffer._get_connection().execute(
+            """
+            INSERT INTO pending_events (event_id, event_type, payload_json, created_at)
+            VALUES ('', 'legacy', ?, ?)
+            """,
+            (json.dumps({"event_type": "legacy"}), time.time()),
+        )
+        queued_id, event = buffer.peek_batch()[0]
+        assert event["event_id"]
+        row = buffer._get_connection().execute(
+            "SELECT event_id FROM pending_events WHERE id = ?", (queued_id,)
+        ).fetchone()
+        assert row[0] == event["event_id"]
+    finally:
+        buffer.close()
+
+
+def test_byte_capacity_rejects_an_oversized_event(tmp_path):
+    buffer = LocalBoundedBuffer(
+        db_path=str(tmp_path / "small.db"),
+        max_events=10,
+        max_bytes=80,
+    )
+    try:
+        assert not buffer.push({"event_id": "too-large", "value": "x" * 200})
+        assert buffer.get_depth() == 0
+        assert buffer.get_dropped_count() == 1
+    finally:
+        buffer.close()
+
+
+def test_retention_expires_events_with_a_warning_count(temp_buffer):
+    temp_buffer.retention_seconds = 1
+    assert temp_buffer.push({"event_id": "expired"})
+    with temp_buffer._lock:
+        temp_buffer._get_connection().execute(
+            "UPDATE pending_events SET created_at = ?", (time.time() - 10,)
+        )
+    assert temp_buffer.peek_batch() == []
+    assert temp_buffer.get_dropped_count() == 1
+
+
+def test_buffer_database_has_owner_only_permissions(temp_buffer):
+    if os.name != "nt":
+        mode = stat.S_IMODE(os.stat(temp_buffer.db_path).st_mode)
+        assert mode == 0o600
 
 
 def test_corruption_recovery():
