@@ -1,0 +1,42 @@
+# ============================================================
+# Rule: privileged_account_login
+# ============================================================
+# Fires when a known privileged or default admin account
+# successfully logs in.  These accounts should only be used
+# for break-glass scenarios; routine logins are suspicious.
+#
+# Mapped to Windows Security Events:
+#   4624 — An account was successfully logged on
+#
+# Severity: HIGH — privileged account usage warrants immediate
+# review regardless of legitimacy.
+#
+# Customise `values` with your own environment's admin account
+# names to tune false-positive rates.
+# ============================================================
+
+name: privileged_account_login
+description: >
+  Detects successful logins by known privileged or default administrator
+  accounts (e.g. Administrator, root, sa).  These accounts should rarely
+  be used; any login should be reviewed immediately.
+severity: HIGH
+enabled: true
+tags:
+  - privilege_escalation
+  - admin_access
+  - T1078.002  # MITRE ATT&CK: Valid Accounts — Domain Accounts
+
+condition:
+  type: pattern_match
+  field: username
+  values:
+    - Administrator
+    - administrator
+    - admin
+    - root
+    - sa          # SQL Server system admin
+    - sysadmin
+    - superuser
+    - LocalAdmin
+    - localadmin

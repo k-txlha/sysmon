@@ -120,8 +120,8 @@ def collect_processes():
 def collect_network_metrics(agent):
     return {
         "hostname": agent,
-        "ip-address": random_ip(),
-        "mac-address": random_mac(),
+        "ip_address": random_ip(),
+        "mac_address": random_mac(),
     }
 
 

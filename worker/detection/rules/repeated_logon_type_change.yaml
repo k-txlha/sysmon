@@ -1,0 +1,38 @@
+# ============================================================
+# Rule: repeated_logon_type_change
+# ============================================================
+# Fires when a single username generates 4 or more login
+# events in a short window, regardless of logon type.
+#
+# Repeated rapid logins — even successful ones — can indicate:
+#   - Token replay / pass-the-hash attacks
+#   - Lateral movement (attacker pivoting across systems)
+#   - Automated credential stuffing tools
+#
+# Mapped to Windows Security Events:
+#   4624 — An account was successfully logged on
+#
+# Severity: HIGH
+# ============================================================
+
+name: repeated_logon_type_change
+description: >
+  Detects a single username generating 4 or more login events within a
+  3-minute window.  Rapid repeated authentications may indicate lateral
+  movement, token relay attacks (pass-the-hash / pass-the-ticket), or
+  automated credential stuffing tools actively working through an account.
+severity: HIGH
+enabled: true
+tags:
+  - lateral_movement
+  - pass_the_hash
+  - credential_stuffing
+  - T1550.002  # MITRE ATT&CK: Pass the Hash
+  - T1021      # MITRE ATT&CK: Remote Services
+
+condition:
+  type: threshold
+  field: username
+  count: 4
+  window_seconds: 180
+  filter_status: SUCCESS

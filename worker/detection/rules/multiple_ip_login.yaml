@@ -1,0 +1,34 @@
+# ============================================================
+# Rule: multiple_ip_login
+# ============================================================
+# Fires when the same username successfully authenticates from
+# 3 or more distinct source IPs within a 5-minute window.
+#
+# Mapped to Windows Security Events:
+#   4624 — An account was successfully logged on
+#
+# Severity: CRITICAL — strong indicator of credential sharing,
+# session hijacking, or a compromised account being actively
+# used by multiple attackers simultaneously.
+# ============================================================
+
+name: multiple_ip_login
+description: >
+  Detects a single username authenticating successfully from 3 or more
+  different source IP addresses within a 5-minute window.
+  This is a strong indicator of credential sharing or a compromised
+  account being used by multiple attackers simultaneously.
+severity: CRITICAL
+enabled: true
+tags:
+  - lateral_movement
+  - credential_compromise
+  - T1078  # MITRE ATT&CK: Valid Accounts
+  - T1550  # MITRE ATT&CK: Use Alternate Authentication Material
+
+condition:
+  type: threshold
+  field: username
+  count: 3
+  window_seconds: 300
+  filter_status: SUCCESS

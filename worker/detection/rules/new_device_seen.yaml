@@ -1,0 +1,33 @@
+# ============================================================
+# Rule: new_device_seen
+# ============================================================
+# Fires when more than 1 new unique agent_id appears in a
+# 5-minute batch window — indicating a new, unregistered
+# endpoint has begun reporting.
+#
+# Severity: MEDIUM — may be legitimate (new employee laptop)
+# or a rogue device / attacker-deployed sensor.
+#
+# Note: This rule uses THRESHOLD on the "agent_id" field.
+# The engine counts distinct agent_id values per batch.
+# A count of 1 is always expected (the sending agent itself);
+# anything higher in a short window is unusual.
+# ============================================================
+
+name: new_device_seen
+description: >
+  Fires when an unusually high number of new agent IDs are seen within a
+  short window, suggesting an unregistered or rogue device has joined the
+  monitored environment. Tune the count threshold for your fleet size.
+severity: MEDIUM
+enabled: true
+tags:
+  - asset_discovery
+  - rogue_device
+  - T1200  # MITRE ATT&CK: Hardware Additions
+
+condition:
+  type: threshold
+  field: agent_id
+  count: 2
+  window_seconds: 300

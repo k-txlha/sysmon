@@ -1,0 +1,30 @@
+# ============================================================
+# Rule: after_hours_login
+# ============================================================
+# Fires when a SUCCESSFUL login occurs between 22:00 and 06:00
+# UTC — outside typical business hours.
+#
+# Mapped to Windows Security Events:
+#   4624 — An account was successfully logged on
+#
+# Severity: HIGH — could indicate unauthorized access, a
+# compromised credential used remotely, or insider threat.
+# ============================================================
+
+name: after_hours_login
+description: >
+  Detects successful login events that occur between 22:00 and 06:00 UTC,
+  outside of normal business hours. May indicate a compromised account,
+  remote attacker operating across time zones, or an insider threat.
+severity: HIGH
+enabled: true
+tags:
+  - after_hours
+  - insider_threat
+  - T1078  # MITRE ATT&CK: Valid Accounts
+
+condition:
+  type: time_window
+  start_hour: 22   # 10 PM UTC — start of restricted window
+  end_hour: 6      # 06 AM UTC — end of restricted window
+  filter_status: SUCCESS

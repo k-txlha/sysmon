@@ -1,0 +1,33 @@
+# ============================================================
+# Rule: off_hours_service_start
+# ============================================================
+# Fires when a "Service (Background Process)" logon type is
+# observed between 20:00 and 07:00 UTC.
+#
+# Mapped to Windows Security Events:
+#   4624 — An account was successfully logged on
+#   Logon Type 5: Service
+#
+# Severity: MEDIUM — legitimate services typically start at
+# boot time, not in the middle of the night.  A service
+# account logging in at 3AM may indicate malware persistence.
+# ============================================================
+
+name: off_hours_service_start
+description: >
+  Detects service account logons (Logon Type 5) that occur during off-hours
+  (20:00–07:00 UTC).  Scheduled tasks and services should be configured to
+  run at known times; unexpected service logins may indicate malware
+  persistence or unauthorized scheduled task creation.
+severity: MEDIUM
+enabled: true
+tags:
+  - persistence
+  - scheduled_task
+  - T1053  # MITRE ATT&CK: Scheduled Task/Job
+
+condition:
+  type: time_window
+  start_hour: 20   # 8 PM UTC
+  end_hour: 7      # 7 AM UTC
+  filter_status: SUCCESS
