@@ -486,6 +486,7 @@ class TestBackendAPI(unittest.TestCase):
         self.assertEqual(not_due.headers["cache-control"], "no-store")
         self.assertFalse(not_due.json()["renewed"])
         self.assertEqual(not_due.json()["agent_token"], old_token)
+        self.assertEqual(not_due.json()["tenant_id"], enrollment.json()["tenant_id"])
 
         self.set_token_expiration(
             old_token, datetime.now(timezone.utc) + timedelta(minutes=1)
@@ -500,6 +501,7 @@ class TestBackendAPI(unittest.TestCase):
             renewed.json()["agent_id"],
             agent_service._load_token(old_token)["agent_id"],
         )
+        self.assertEqual(renewed.json()["tenant_id"], enrollment.json()["tenant_id"])
         self.assertNotEqual(renewed.json()["agent_token"], old_token)
 
         replacement = renewed.json()["agent_token"]

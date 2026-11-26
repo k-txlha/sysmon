@@ -165,6 +165,7 @@ async def renew_agent_token(
     return {
         "agent_token": token_data["token"],
         "agent_id": token_data["agent_id"],
+        "tenant_id": token_data["tenant_id"],
         "expires_at": token_data["expiration"],
         "renewed": token_data.get("renewed", True),
     }
