@@ -30,6 +30,62 @@ def _parse_timestamp(ts_val: str | None) -> datetime.datetime:
         return datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
 
 
+def _build_process_row(
+    payload: dict,
+    proc: dict,
+    event_type: str,
+    event_timestamp: datetime.datetime,
+) -> tuple:
+    """Normalizes a single process lifecycle record into a ClickHouse row tuple."""
+    cmdline_raw = proc.get("command_line") or []
+    if isinstance(cmdline_raw, (list, tuple)):
+        cmdline = [str(arg) for arg in cmdline_raw]
+    else:
+        cmdline = [str(cmdline_raw)]
+
+    return (
+        str(payload.get("agent_id", "unknown_agent")),
+        str(payload.get("tenant_id", "default")),
+        str(payload.get("host_id", "")),
+        str(payload.get("event_id", "")),
+        event_type,
+        event_timestamp,
+        int(proc.get("pid") or 0),
+        int(proc.get("ppid") or 0),
+        str(proc.get("name") or ""),
+        str(proc.get("executable_path") or ""),
+        cmdline,
+        str(proc.get("process_start_time") or ""),
+        str(proc.get("observed_exit_time") or ""),
+        str(proc.get("sha256") or ""),
+        str(proc.get("hash_status") or ""),
+        str(proc.get("username") or ""),
+        str(proc.get("working_directory") or ""),
+    )
+
+
+def _extract_process_rows(
+    payload: dict,
+    event_timestamp: datetime.datetime,
+) -> list[tuple]:
+    """Extracts ClickHouse PROCESS_EVENTS rows from process.snapshot, process.start, or process.exit envelopes."""
+    event_type = payload.get("event_type", "")
+    data = payload.get("data") or {}
+
+    if event_type == "process.snapshot":
+        processes = data.get("processes") or []
+        return [
+            _build_process_row(payload, proc, event_type, event_timestamp)
+            for proc in processes
+            if isinstance(proc, dict)
+        ]
+
+    if event_type in ("process.start", "process.exit") and isinstance(data, dict):
+        return [_build_process_row(payload, data, event_type, event_timestamp)]
+
+    return []
+
+
 async def start_worker():
     # 1. Initialize and connect to ClickHouse
     db_service = ClickHouseService()
@@ -56,6 +112,7 @@ async def start_worker():
     device_buffer = {}  # agent_id -> device_row (deduplicates within batch window)
     event_buffer = []   # list of sequential auth log tuples
     health_buffer = []  # list of agent health diagnostic tuples
+    process_buffer = [] # list of process lifecycle event tuples
 
     last_flush_time = asyncio.get_event_loop().time()
 
@@ -125,6 +182,10 @@ async def start_worker():
                     )
                     health_buffer.append(health_row)
 
+                # --- 4. PROCESS LIFECYCLE EVENTS ---
+                elif event_type in ("process.snapshot", "process.start", "process.exit"):
+                    process_buffer.extend(_extract_process_rows(payload, event_timestamp))
+
             except asyncio.TimeoutError:
                 pass
 
@@ -137,8 +198,10 @@ async def start_worker():
                 len(event_buffer) >= MAX_BATCH_SIZE
                 or len(device_buffer) >= MAX_BATCH_SIZE
                 or len(health_buffer) >= MAX_BATCH_SIZE
+                or len(process_buffer) >= MAX_BATCH_SIZE
             ) or (
-                time_since_flush >= MAX_WAIT_TIME and (event_buffer or device_buffer or health_buffer)
+                time_since_flush >= MAX_WAIT_TIME
+                and (event_buffer or device_buffer or health_buffer or process_buffer)
             ):
 
                 # 1. Flush Device Asset Updates
@@ -201,6 +264,11 @@ async def start_worker():
                 if health_buffer:
                     db_service.insert_health_batch(health_buffer)
                     health_buffer.clear()
+
+                # 4. Flush Process Lifecycle Events
+                if process_buffer:
+                    db_service.insert_process_events_batch(process_buffer)
+                    process_buffer.clear()
 
                 # Reset execution timer
                 last_flush_time = current_time

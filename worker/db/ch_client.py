@@ -81,6 +81,29 @@ class ClickHouseService:
                                 ) ENGINE = MergeTree()
                             ORDER BY (agent_id, timestamp);
                             """)
+
+        self.client.command("""
+                            CREATE TABLE IF NOT EXISTS PROCESS_EVENTS (
+                                agent_id           String,
+                                tenant_id          String,
+                                host_id            String,
+                                event_id           String,
+                                event_type         String,
+                                timestamp          DateTime64(3, 'UTC'),
+                                pid                UInt32,
+                                ppid               UInt32,
+                                name               String,
+                                executable_path    String,
+                                command_line       Array(String),
+                                process_start_time String,
+                                observed_exit_time String,
+                                sha256             String,
+                                hash_status        String,
+                                username           String,
+                                working_directory  String
+                                ) ENGINE = MergeTree()
+                            ORDER BY (agent_id, timestamp, pid, event_type);
+                            """)
         logger.info("ClickHouse schemas initialized successfully.")
 
     def insert_devices_batch(self, rows: list):
@@ -189,3 +212,37 @@ class ClickHouseService:
             logger.info(f"Persisted {len(rows)} health metrics record(s) to AGENT_HEALTH table.")
         except Exception as e:
             logger.error(f"Failed to batch insert into AGENT_HEALTH: {e}")
+
+    def insert_process_events_batch(self, rows: list) -> None:
+        """Persists a batch of process lifecycle events to PROCESS_EVENTS."""
+        if not rows:
+            return
+        try:
+            self.client.insert(
+                f"{settings.CLICKHOUSE_DB}.PROCESS_EVENTS",
+                rows,
+                column_names=[
+                    "agent_id",
+                    "tenant_id",
+                    "host_id",
+                    "event_id",
+                    "event_type",
+                    "timestamp",
+                    "pid",
+                    "ppid",
+                    "name",
+                    "executable_path",
+                    "command_line",
+                    "process_start_time",
+                    "observed_exit_time",
+                    "sha256",
+                    "hash_status",
+                    "username",
+                    "working_directory",
+                ],
+            )
+            logger.info(
+                f"Persisted {len(rows)} process lifecycle record(s) to PROCESS_EVENTS table."
+            )
+        except Exception as e:
+            logger.error(f"Failed to batch insert into PROCESS_EVENTS: {e}")
