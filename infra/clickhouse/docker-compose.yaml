@@ -12,6 +12,7 @@ services:
       - CLICKHOUSE_DB=${CLICKHOUSE_DB:-metrics}
     volumes:
       - ./users.xml:/etc/clickhouse-server/users.d/users.xml
+      - ./admin.xml:/etc/clickhouse-server/users.d/admin.xml
       - clickhouse_data:/var/lib/clickhouse
       - clickhouse_logs:/var/log/clickhouse-server
     ulimits:
