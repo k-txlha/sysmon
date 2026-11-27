@@ -1,0 +1,9 @@
+<clickhouse>
+    <users>
+        <admin>
+            <grants>
+                <query>GRANT SHOW USERS on *.*</query>
+            </grants>
+        </admin>
+    </users>
+</clickhouse>

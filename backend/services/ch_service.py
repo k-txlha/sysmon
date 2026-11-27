@@ -218,19 +218,29 @@ class ClickHouseQueryService:
         """
         Updates the resolved state of an alert.
         Uses ALTER TABLE UPDATE in ClickHouse.
+
+        alert_id is validated as a UUID before being interpolated into the
+        mutation statement. ClickHouse ALTER TABLE mutations cannot use the
+        %(...)s parameter syntax, so the value is validated then formatted
+        safely using the UUID type, eliminating the injection surface.
         """
+        try:
+            validated_id = str(uuid.UUID(alert_id))
+        except ValueError:
+            raise ValueError(f"Invalid alert_id format: {alert_id!r}")
+
         client = self._ensure_client()
         resolved_val = 1 if resolved else 0
         mutation_sql = f"""
             ALTER TABLE ALERTS
             UPDATE resolved = {resolved_val}
-            WHERE toString(alert_id) = '{alert_id}'
+            WHERE toString(alert_id) = '{validated_id}'
         """
         try:
             client.command(mutation_sql)
             return True
         except Exception as e:
-            logger.error(f"Failed to update alert resolution: {e}")
+            logger.error("Failed to update alert resolution: %s", type(e).__name__)
             raise
 
     def get_alert_stats(self) -> Dict[str, Any]:
